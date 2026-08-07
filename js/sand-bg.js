@@ -1,0 +1,930 @@
+// THE ELECTRIC VIVID RAINBOW COMPANY — full-screen interactive sand,
+// zoomed way out. Forked off Zodiac Drift as of 2026-08-02; no
+// persistence, no game chrome.
+//   CORRECTION (site-tuning session, later same day): the line below used
+// to claim state/materials/physics/entities/stamps/render were "verbatim
+// from the game" — that was the ORIGINAL one-time-fork decision, and it's
+// been gone since the tuning/perf session. As of that session: the site's
+// js/ files are their own codebase, no verbatim obligation, no
+// diff-flagging against the game (see that session's handoff §0 for the
+// full framing change). materials.js, render.js, state.js, and physics.js
+// have all had real site-specific edits landed directly in them since —
+// most recently: state.js's onWorldExit hook and physics.js's one-line
+// call site (trySwap's world-edge deletion), added to kill a full-grid
+// scan that used to run every render frame. entities.js and stamps.js
+// remain untouched so far, not because of a verbatim rule, just because
+// nothing's needed editing there yet.
+//   One courtesy still kept, not an obligation: flagging when a site fix
+// is general enough to be worth porting BACK to the game.
+
+import { W, H, VIEW_W, VIEW_H, camera, clampCamera, grid, idx, temp,
+         setTemperatureEnabled, SPAWN_TEMP_DEFAULT, chunkAwake,
+         setNonEmissiveGlowMult, setOnWorldExit, setOnDecayToEmpty } from "./state.js";
+import { MATS, MATBY, EMPTY } from "./materials.js";
+import { step, wake, clearSettling } from "./physics.js";
+import { render, setFlatDirtyRectsEnabled, flatDirtyRectsEnabled } from "./render.js";
+
+setTemperatureEnabled(false);
+
+// ---- material palette. Real materials, found by name — never
+// hardcoded ids. Picked deliberately from the roster's powder/liquid/
+// pressured materials with NO onContact and NO decay (verified against
+// the actual materials.js definitions, not assumed) — density-based
+// sinking/layering still works fully (that's real physics.js behavior,
+// nothing special needed to keep it), reactions are just off the table
+// for this pass by not including any reactive materials, not by
+// disabling anything.
+const PALETTE_NAMES = [
+  "Red Sand", "Red Water", "Red Gas",
+  "Orange Sand", "Orange Water", "Orange Gas",
+  "Yellow Sand", "Yellow Water", "Yellow Gas",
+  "Green Sand", "Green Water", "Green Gas",
+  "Blue Sand", "Blue Water", "Blue Gas",
+  "Purple Sand", "Purple Water", "Purple Gas",
+];
+const PALETTE = PALETTE_NAMES.map(name => {
+  const id = MATS.findIndex(m => m.name === name);
+  if (id === -1) throw new Error(`Palette material "${name}" not found in materials.js — has it been renamed?`);
+  return { id, name, color: MATS[id].sw };
+});
+let selectedMat = PALETTE[0].id;   // Sand, by default
+
+const STONE = MATS.findIndex(m => m.name === "Stone");
+if (STONE === -1) throw new Error("Stone not found in materials.js — has it been renamed?");
+const VOIDSTONE = MATS.findIndex(m => m.name === "Voidstone");
+if (VOIDSTONE === -1) throw new Error("Voidstone not found in materials.js — has it been renamed?");
+
+// Zoomed all the way out was the wrong tool for "grains look too big" —
+// camera.scale doesn't change on-screen block size at all (the render
+// buffer is fixed-resolution, CSS-stretched regardless of zoom). scale=1
+// now shows the FULL world height with zero void margin, since VIEW_H
+// was doubled (state.js) to equal H exactly.
+camera.scale = 1;
+camera.x = Math.round((W - VIEW_W * camera.scale) / 2);
+camera.y = Math.round((H - VIEW_H * camera.scale) / 2);   // provisional — clampCamera below will set this itself
+clampCamera();
+// ELECTRIC VIVID RAINBOW FORK: bottom-align AFTER clampCamera, not
+// before — clampCamera (real, unmodified game code) unconditionally
+// CENTERS the world whenever the view is taller than it (our case,
+// VIEW_H=576 > H=384 since the resolution bump), which would silently
+// undo anything set beforehand. Centering split the extra buffer space
+// evenly above AND below, putting real out-of-bounds space — rendered
+// as the game's own bold red edge-warning gradient, not neutral void —
+// at the visible bottom regardless of crop height. Bottom-aligning
+// instead means the world's last row lands exactly on the buffer's
+// last row: all the extra space stacks at the TOP, which the
+// bottom-anchored crop (below) already cuts first in a short/landscape
+// window, before it ever reaches real content.
+if (VIEW_H * camera.scale >= H) {
+  camera.y = Math.round(H - VIEW_H * camera.scale);
+}
+// Static camera (never pans), so there's no sub-pixel-scroll reason to
+// keep fractional coords — flooring here means every downstream array
+// index built from camera.x/y is safe by construction, not just at the
+// one call site that happened to get caught by testing.
+camera.x = Math.floor(camera.x);
+camera.y = Math.floor(camera.y);
+
+// trySwap (physics.js) deletes material outright once it falls past the
+// world's bottom edge ("left the world top or bottom — gone") — there's
+// no natural floor at y=H. So this Stone floor isn't decorative, it's
+// the only thing stopping painted sand from vanishing... EXCEPT at
+// deliberate gaps: a hole is just an EMPTY cell left in the floor row.
+// Sand that lands there tries to sink one more row, hits y>=H, and
+// physics.js deletes it on the very next tick — no engine change
+// needed, confirmed by reading trySwap directly rather than assuming.
+// This is the drain mechanism for the live-sand cap below: holes bleed
+// off standing piles continuously instead of needing an active prune.
+const FLOOR_HOLE_WIDTH = 6;     // cells wide, per gap
+const FLOOR_HOLE_SPACING = 48;  // cells between gap starts (pitch)
+const FLOOR_Y = H - 1;
+const floorCells = new Set();   // real indices actually placed as floor — NOT just "W of them", since holes mean it's fewer. Used below to keep the live-sand cap counting painted material only, not structural floor.
+for (let x = 0; x < W; x++) {
+  if ((x % FLOOR_HOLE_SPACING) < FLOOR_HOLE_WIDTH) continue;   // hole — leave EMPTY
+  const i = idx(x, FLOOR_Y);
+  grid[i] = STONE;
+  floorCells.add(i);
+  wake(x, FLOOR_Y);
+}
+
+// ---- LIVE-SAND CAP. Holes in the floor (above) drain standing piles
+// continuously, but a visitor holding the pointer down and dragging
+// across open space can still add material faster than a handful of
+// narrow gaps can drain it — this is the hard backstop for that case,
+// not a replacement for the holes.
+//   4000 chosen as: world is W*H = 270,336 cells total, but this is a
+// homepage decoration meant to draw a glance, not become the page —
+// 4000 painted cells is enough for genuinely dense, satisfying pile-ups
+// (a full BRUSH_R=4 dab is ~49 cells, so this is ~80 uninterrupted dabs
+// worth of standing material) while staying nowhere near "buried."
+// It's also a trivial fraction of total awake-chunk capacity, so it's
+// not doing any perf work here — it's a visual-density ceiling, not a
+// performance safety valve (the chunk-sleep system already handles that).
+// One constant, easy to move if it reads wrong once it's live in front
+// of you — say the word and I'll wire it into the tuning panel instead.
+const MAX_LIVE_SAND = 4000;
+// ELECTRIC RAINBOW MAGIC FORK — was recomputed via a full W*H grid scan
+// (~270k cells) every render-eligible frame. Now maintained incrementally:
+// +1 in placeMaterial below when a NEW cell is painted (overwriting an
+// already-painted cell is still exempt, unchanged), -1 via onWorldExit
+// (state.js) whenever physics.js's trySwap deletes a cell for falling past
+// the world edge, OR whenever physics.js's decay pass converts a cell to
+// EMPTY (onDecayToEmpty, added alongside real decay rates on the 18
+// rainbow materials — see materials.js). Between the two, this now
+// covers every deletion path a palette material can hit: world-exit and
+// decay-to-EMPTY are the only ways any of the current 18 ever vanish
+// (none have onContact/meltTo/freezeTo/emits, verified directly against
+// materials.js, not assumed — and none decayTo another material, only
+// to EMPTY). Floor/DOM-collider cells are static solids that never reach
+// either deletion path, so this can only ever fire for painted material.
+// O(1) per event instead of O(W*H) per frame, exact — not a throttled
+// estimate.
+let paintedCellCount = 0;
+setOnWorldExit(() => {
+  paintedCellCount = Math.max(0, paintedCellCount - 1);
+});
+setOnDecayToEmpty(() => {
+  paintedCellCount = Math.max(0, paintedCellCount - 1);
+});
+
+// ELECTRIC RAINBOW MAGIC FORK — a decay-based expiry queue lived here
+// briefly (30s FIFO, cleared cells to help bound long-run particle count)
+// and got pulled: decayQueue.shift() is O(n) per call, and continuous
+// pour (added same session) makes it easy to build a large pile fast
+// whose cells then cluster together in expiry time too, since expiresAt
+// is a fixed offset from placement tick — meaning a burst of thousands of
+// entries could expire in a tight run of ticks, each paying an O(n) shift
+// against a still-large queue. Real O(n²) territory in a hot loop, and
+// exactly what caused the freezing. Testing at the time only ever pushed
+// a couple of cells at once — never the realistic "hold continuously,
+// build a real pile" case that continuous pour makes common. If decay
+// comes back, it needs an actual ring buffer or a head-index into a
+// periodically-compacted array, not Array.shift() in a loop over
+// anything that can grow into the thousands.
+
+function placeMaterial(wx, wy) {
+  if (wx < 0 || wx >= W || wy < 0 || wy >= FLOOR_Y) return;
+  const i = idx(wx, wy);
+  const existing = grid[i];
+  const empty = existing === EMPTY;
+  // ELECTRIC RAINBOW MAGIC FORK — overwrite-on-paint REMOVED (was a 60%
+  // per-touch punch-through chance, added to match main.js's real
+  // paint() rule). Reverted to a hard refuse on any non-empty cell:
+  // the overwrite mechanic isn't part of the actual game to begin with,
+  // it's a site-only addition, and it was the leading suspect for an
+  // on-device freeze when painting a liquid over an existing powder
+  // cell. Slow decay (materials.js, all 18 rainbow materials) is the
+  // replacement mechanism for clearing old material — painted cells now
+  // fade out on their own over time instead of being punched through.
+  if (!empty) return;
+  const M = MATS[selectedMat];
+  if (paintedCellCount >= MAX_LIVE_SAND) return;
+  grid[i] = selectedMat;
+  temp[i] = SPAWN_TEMP_DEFAULT;
+  clearSettling(i);
+  wake(wx, wy);
+  paintedCellCount++;
+}
+
+// ---- DOM element collision: any element with class="solid-collider"
+// becomes solid within the sim, positioned via its real getBoundingClientRect
+// — the wordmark/tagline are the first test case. Reuses Stone (same
+// material as the floor) rather than adding a new one, easy to swap
+// later. Provenance-tracked (domColliderCells) so a resize can cleanly
+// undo exactly what THIS system placed, without touching the floor or
+// anything the user painted.
+//   ELECTRIC RAINBOW MAGIC FORK: now uses Voidstone (not Stone) and only
+// a THIN LEDGE at the bottom edge of each element's bounding box, not
+// the full height — see applyDomColliders below for the actual reasoning.
+const domColliderCells = new Set();
+
+function clearDomColliders() {
+  for (const i of domColliderCells) {
+    // Only clear if it's still literally what we placed — if user-painted
+    // sand has since settled/compacted into this exact cell, leave it
+    // alone rather than deleting real content.
+    if (grid[i] === VOIDSTONE) {
+      grid[i] = EMPTY;
+      wake(i % W, Math.floor(i / W));
+    }
+  }
+  domColliderCells.clear();
+}
+
+// How thick (world cells) the invisible footing under each text collider
+// is. Independent of CELL_PX (that's screen pixels per cell, this is
+// world-space) — stays a small, thin strip regardless of grain size.
+const COLLIDER_LEDGE_THICKNESS = 1;
+
+function applyDomColliders() {
+  clearDomColliders();
+  const rect0 = canvases[0].getBoundingClientRect();
+  const els = document.querySelectorAll(".solid-collider");
+  for (const el of els) {
+    const r = el.getBoundingClientRect();
+    const wx0 = Math.floor(camera.x + (r.left - rect0.left) / rect0.width * VIEW_W * camera.scale);
+    const wx1 = Math.ceil(camera.x + (r.right - rect0.left) / rect0.width * VIEW_W * camera.scale);
+    const wyBottom = Math.ceil(camera.y + (r.bottom - rect0.top) / rect0.height * VIEW_H * camera.scale);
+    // ELECTRIC RAINBOW MAGIC FORK — was the element's FULL bounding-box
+    // height (top edge to bottom edge), filled with visible Stone. Now:
+    // a thin ledge, COLLIDER_LEDGE_THICKNESS cells tall, anchored at the
+    // BOTTOM edge only — a footing directly under the text's baseline,
+    // not a block spanning the whole letter height. Full width still
+    // (wx0/wx1 unchanged), colored with Voidstone (blends into the void,
+    // see materials.js) instead of Stone's visible color — reads as sand
+    // piling up on an invisible shelf right under each line, not a
+    // rectangle interrupting the gradient text sitting above it.
+    const wy0 = wyBottom - COLLIDER_LEDGE_THICKNESS;
+    const wy1 = wyBottom;
+    for (let y = wy0; y < wy1; y++) {
+      for (let x = wx0; x < wx1; x++) {
+        if (x < 0 || x >= W || y < 0 || y >= H) continue;
+        const i = idx(x, y);
+        if (grid[i] !== EMPTY) continue;   // never overwrite existing sand
+        grid[i] = VOIDSTONE;
+        domColliderCells.add(i);
+        wake(x, y);
+      }
+    }
+  }
+}
+
+// Brush radius scales with zoom — at 1 world-cell fixed radius, a dab
+// would look tiny once each cell only covers a fraction of a screen
+// pixel at this zoom level. Scaling it keeps the touch feel consistent.
+const BRUSH_R = 4;
+function paintAt(wx, wy) {
+  for (let dy = -BRUSH_R; dy <= BRUSH_R; dy++) {
+    for (let dx = -BRUSH_R; dx <= BRUSH_R; dx++) {
+      if (dx * dx + dy * dy <= BRUSH_R * BRUSH_R) placeMaterial(wx + dx, wy + dy);
+    }
+  }
+}
+
+// ---- full-screen sizing: fixed, ADJUSTABLE pixel size per world-cell
+// (CELL_PX) — NOT stretched to fill whatever shape the window happens
+// to be. render() always produces the same VIEW_W x VIEW_H buffer;
+// stretching all of it into any window shape (the previous approach)
+// squished the floor/pile into a barely-visible sliver in short
+// landscape windows — technically still rendered, just diluted across
+// a much taller virtual space than the window could usefully show.
+//   Each canvas is now sized to its natural VIEW_W*CELL_PX x
+// VIEW_H*CELL_PX and anchored bottom-center: only as many rows as
+// actually fit the window height are shown, and they're always the
+// BOTTOM rows — right where the floor and any pile are — with the
+// empty sky above cropped off instead of squeezed in. A tap in the
+// cropped-off void area harmlessly no-ops (placeSand's own bounds
+// check rejects it), no special-casing needed.
+//   CELL_PX is the actual adjustable knob: raise it for bigger grains
+// (shows less of the world), lower it for smaller grains (shows more).
+// Ceiling: if the window exceeds VIEW_W*CELL_PX or VIEW_H*CELL_PX in
+// either dimension, that edge will letterbox (visible void-colored
+// gap) — the fixed 300x384 buffer is the hard limit. Fix at that point
+// is bumping VIEW_W/VIEW_H in state.js, or lowering CELL_PX.
+// ---- responsive grain default. Mobile: CELL_PX=2 (smaller grains —
+// more of the world fits the fixed VIEW_W*CELL_PX buffer into a
+// narrower window before letterboxing). Desktop: CELL_PX=3. Width-based
+// rather than pointer-type-based (matchMedia "(pointer: coarse)") —
+// Crash's framing was screen-size/viewport ("mobile needs...desktop
+// needs"), and width is what actually drives the letterbox tradeoff
+// this constant controls. 768px is a common phone/tablet breakpoint,
+// not measured against this site specifically — trivial to change if
+// it reads wrong on a real device.
+const MOBILE_BREAKPOINT_PX = 768;
+function responsiveCellPx() {
+  return window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT_PX}px)`).matches ? 2 : 3;
+}
+// Once the tuning-panel slider has been touched, the responsive default
+// stops reasserting itself on resize/orientation-change — a manual
+// choice shouldn't get silently overwritten by rotating the phone.
+// Until then, resize/orientationchange keep re-deriving it live (see
+// both handlers below), so e.g. widening a desktop browser window past
+// the breakpoint, or the reverse, actually changes grain size without
+// a reload.
+let grainUserOverridden = false;
+// ELECTRIC VIVID RAINBOW FORK — was `const`, now `let`: the tuning
+// panel's grain-size slider reassigns this directly (same module, legal)
+// and calls resizeBox() itself to apply it. Nothing else in this file
+// reads CELL_PX before resizeBox runs, so a stale read isn't possible.
+let CELL_PX = responsiveCellPx();
+let grainSlider = null;   // assigned once the tuning panel builds it, near the bottom of this file
+// Re-checks the responsive default and, if it's changed and the user
+// hasn't manually overridden it, applies it by driving the actual
+// slider element — dispatching a real "input" event reuses the
+// slider's own onInput callback (below) instead of duplicating the
+// CELL_PX/resizeBox/applyDomColliders sequence a second time here.
+function maybeApplyResponsiveGrain() {
+  if (grainUserOverridden || !grainSlider) return;
+  const target = responsiveCellPx();
+  if (target === CELL_PX) return;
+  grainSlider.value = target;
+  grainSlider.dispatchEvent(new Event("input"));
+}
+const box = document.getElementById("box");
+const canvasIds = ["base", "glow", "blobglow", "laserglow", "vecOverlay"];
+const canvases = canvasIds.map(id => document.getElementById(id));
+function resizeBox() {
+  box.style.width = window.innerWidth + "px";
+  box.style.height = window.innerHeight + "px";
+  const cw = VIEW_W * CELL_PX, ch = VIEW_H * CELL_PX;
+  for (const c of canvases) {
+    c.style.width = cw + "px";
+    c.style.height = ch + "px";
+    c.style.left = "50%";
+    c.style.bottom = "0px";
+    c.style.top = "auto";
+    c.style.transform = "translateX(-50%)";
+  }
+}
+resizeBox();
+applyDomColliders();
+// ELECTRIC RAINBOW MAGIC FORK — applyDomColliders() reads LIVE rendered
+// getBoundingClientRect() off each .solid-collider span, no font-specific
+// math anywhere in it — genuinely font-agnostic by construction. But
+// that also means it's exactly as accurate as whatever's actually
+// painted on screen the moment it runs, and Google Fonts load
+// asynchronously: the call directly above almost certainly measures the
+// h1 in its FALLBACK font (monospace), not the real one, since the
+// custom font typically hasn't finished downloading yet at this point
+// in the page lifecycle. Nothing else was re-triggering a re-measurement
+// after the swap — the only other caller is the debounced resize
+// handler, which has no reason to fire just because a font finished
+// loading. On a phone, where an orientation-triggered resize might never
+// happen in a session, that meant the ledges could sit silently
+// misaligned with the visible letterforms for the entire visit.
+// document.fonts.ready resolves once every @font-face the page
+// requested has either loaded or failed — re-running the measurement
+// there catches the real, final layout. Keeping the immediate call
+// above too: cheap, harmless, and gives SOME colliders right away
+// rather than a naked gap before fonts.ready resolves.
+document.fonts.ready.then(applyDomColliders);
+
+// ---- carry-preview overlay sizing. Plain screen-space canvas — full
+// viewport resolution, 1:1 with CSS pixels (no devicePixelRatio
+// multiplier, matching #box's own canvases, which are sized the same
+// unscaled way — see the CELL_PX comment above). Resized alongside
+// resizeBox() below, not on its own separate schedule, so the two never
+// drift out of sync relative to each other.
+const carryCanvas = document.getElementById("carryOverlay");
+const carryCtx = carryCanvas.getContext("2d");
+function resizeCarryOverlay() {
+  carryCanvas.width = window.innerWidth;
+  carryCanvas.height = window.innerHeight;
+}
+resizeCarryOverlay();
+
+// ---- carry-GLOW overlay. Same screen-space sizing as carryOverlay
+// above, own canvas (index.html's #carryGlow) — a picked-up blob was
+// rendering flat on carryOverlay with no glow at all, since carrying
+// lifts material off the grid entirely (see beginCarry below) and the
+// grid is the only thing render.js's real #glow layer ever draws from.
+// This mirrors the exact base+glow duplicate-canvas trick render.js
+// already uses three times over (#glow, #blobglow, #laserglow): draw
+// the identical solid rects into a second canvas, let a CSS blur/
+// saturate/brightness filter + screen blend do the actual glow. Kept
+// as its own canvas rather than folded into carryOverlay because that
+// filter has to apply to ONLY the glow duplicate, not the crisp layer
+// underneath — one canvas can't have two different filters.
+const carryGlowCanvas = document.getElementById("carryGlow");
+const carryGlowCtx = carryGlowCanvas.getContext("2d");
+function resizeCarryGlow() {
+  carryGlowCanvas.width = window.innerWidth;
+  carryGlowCanvas.height = window.innerHeight;
+}
+resizeCarryGlow();
+
+// ---- WORLD-SPACE LINK OVERLAY. Canvas pixels have no native hit-testing
+// or href of their own — a <canvas> is one DOM element, full stop, so
+// "make this region clickable" always means putting a REAL element on
+// top of it, regardless of what drew the pixels underneath (Stone, a
+// future skeleton-baked building, a stamped/painted shape — all just
+// bytes in the same buffer once rendered, no distinction the DOM can
+// see). This is the general mechanism: give it a WORLD-CELL rectangle,
+// it mints a real <a>, sized/positioned to match on screen, using the
+// same screen<->world math screenToCell (below) already uses, just
+// inverted. Doesn't care what's solid underneath or why.
+//   No real destinations to link yet (skeleton content isn't landed on
+// the site), so nothing calls addLinkRegion() below — this is the
+// mechanism, ready to wire up once there's actual art/structures to
+// attach hrefs to.
+const linkRegions = [];   // {el, wx0, wy0, wx1, wy1}
+
+function worldRectToScreen(wx0, wy0, wx1, wy1) {
+  const rect = canvases[0].getBoundingClientRect();
+  const pxPerWX = rect.width / (VIEW_W * camera.scale);
+  const pxPerWY = rect.height / (VIEW_H * camera.scale);
+  return {
+    left: rect.left + (wx0 - camera.x) * pxPerWX,
+    top: rect.top + (wy0 - camera.y) * pxPerWY,
+    width: (wx1 - wx0) * pxPerWX,
+    height: (wy1 - wy0) * pxPerWY,
+  };
+}
+
+// wx0,wy0,wx1,wy1: world-cell rectangle (same coordinate space
+// screenToCell produces). href: link target. label: for aria-label,
+// since this element has no visible text of its own — the rendered
+// sand/art underneath IS the visual, the <a> is purely a hit-target.
+function addLinkRegion(wx0, wy0, wx1, wy1, href, label) {
+  const el = document.createElement("a");
+  el.href = href;
+  el.setAttribute("aria-label", label || href);
+  // display:block + fixed positioning, explicitly no visible chrome
+  // (no border/background/underline) — this sits ON TOP of already-
+  // rendered content, it should be invisible as an element and only
+  // present as a hit target + whatever native affordance the browser
+  // gives a real link (cursor, focus ring on tab, right-click menu).
+  el.style.cssText = "position:fixed;z-index:12;display:block;";
+  document.body.appendChild(el);
+  const region = { el, wx0, wy0, wx1, wy1 };
+  linkRegions.push(region);
+  positionLinkRegion(region);
+  return region;   // caller can el.remove() + splice this out of linkRegions if a region needs to go away later
+}
+
+function positionLinkRegion(region) {
+  const r = worldRectToScreen(region.wx0, region.wy0, region.wx1, region.wy1);
+  region.el.style.left = r.left + "px";
+  region.el.style.top = r.top + "px";
+  region.el.style.width = r.width + "px";
+  region.el.style.height = r.height + "px";
+}
+
+function repositionAllLinkRegions() {
+  for (const r of linkRegions) positionLinkRegion(r);
+}
+
+let resizeDebounce = null;
+window.addEventListener("resize", () => {
+  maybeApplyResponsiveGrain();   // no-op unless the breakpoint was actually crossed and the user hasn't overridden it
+  resizeBox();
+  resizeCarryOverlay();
+  resizeCarryGlow();
+  repositionAllLinkRegions();   // cheap (just style writes, no layout re-scan), unlike applyDomColliders below — fine to run on every resize event, not just the debounced settle
+  clearTimeout(resizeDebounce);
+  // Debounced — a resize drag fires many events in a row, and re-scanning
+  // every tagged element's real layout position on every single one of
+  // them is wasted work mid-drag. Re-applies once things settle.
+  resizeDebounce = setTimeout(applyDomColliders, 150);
+});
+
+// Orientation changes on mobile fire a resize event, but the browser
+// often hasn't finished reflowing the new layout when that resize lands —
+// getBoundingClientRect() still reads the old orientation's geometry,
+// so the 150ms debounced applyDomColliders above measures the wrong thing
+// and the collider boxes end up misaligned. orientationchange itself fires
+// reliably AFTER the resize, but layout still isn't complete — a short
+// additional delay gives the browser time to finish the reflow before
+// we re-scan. 350ms is generous; most devices finish within 200ms, but
+// cheap insurance for slower hardware.
+window.addEventListener("orientationchange", () => {
+  clearTimeout(resizeDebounce);
+  resizeDebounce = setTimeout(() => {
+    maybeApplyResponsiveGrain();   // rotating can cross the width breakpoint on larger phones/small tablets
+    resizeBox();
+    resizeCarryOverlay();
+    resizeCarryGlow();
+    repositionAllLinkRegions();
+    applyDomColliders();
+  }, 350);
+});
+
+// ---- pointer painting: screen coords -> world cells, via the CANVAS's
+// own live rect (not the box's) — the canvas may now be smaller than
+// the box and offset within it (bottom-anchored, horizontally centered
+// cropping), so the box's own rect would be wrong once it stopped being
+// a 1:1 stand-in for the rendered content.
+let pointerDown = false;
+// ELECTRIC RAINBOW MAGIC FORK — updated on down/move, read every frame in
+// loop() below while pointerDown is true. Matches the real game's model
+// (main.js: a `painting` flag + `if(painting) paint()` once per animation
+// frame, NOT gated on movement) instead of the site's old move-only
+// painting, which only fired on pointermove and did nothing while held
+// still — holding still is exactly the "continuous pour" case.
+let lastPointerX = 0, lastPointerY = 0;
+function screenToCell(clientX, clientY) {
+  const rect = canvases[0].getBoundingClientRect();
+  // Floor the FULL combined coordinate, not just the offset — camera.x/y
+  // can be fractional, and a fractional index silently no-ops on a
+  // Uint8Array write instead of throwing. Caught this earlier by
+  // testing, not by reading the code.
+  const cellX = Math.floor(camera.x + (clientX - rect.left) / rect.width * VIEW_W * camera.scale);
+  const cellY = Math.floor(camera.y + (clientY - rect.top) / rect.height * VIEW_H * camera.scale);
+  return [cellX, cellY];
+}
+
+// ---- pick up & carry: touch non-empty material -> lift a radius-6 disc
+// of it clear off the grid (physics stops seeing it entirely, so it
+// genuinely floats, ignoring gravity, not just "moves slowly") -> it
+// follows the pointer in screen space only, no grid writes while held ->
+// on release, write every held cell back at its same relative offset
+// from wherever the pointer ended up. Gesture disambiguation is just
+// "what's under the touch": empty cell -> paintAt (existing behavior,
+// untouched), non-empty -> carry. No mode toggle, no long-press timer.
+//   Deliberately bypasses paintAt/placeMaterial for both pickup and
+// drop — this is EXISTING material changing location, not new material
+// being created, so it must NOT touch paintedCellCount in either
+// direction (pick up already-counted material, set it back down,
+// still exactly one count the whole time) or MAX_LIVE_SAND's cap. Both
+// hooks (onWorldExit, onDecayToEmpty) stay irrelevant here too — this
+// is a same-tick relocation, not a deletion.
+const CARRY_R = 6;
+let carrying = false;
+let carriedCells = [];        // {dx, dy, mat} — dx/dy relative to the pickup anchor cell
+let carryPointerX = 0, carryPointerY = 0;   // last known client coords while carrying, screen space
+
+function beginCarry(anchorWX, anchorWY, clientX, clientY) {
+  carriedCells = [];
+  for (let dy = -CARRY_R; dy <= CARRY_R; dy++) {
+    for (let dx = -CARRY_R; dx <= CARRY_R; dx++) {
+      if (dx * dx + dy * dy > CARRY_R * CARRY_R) continue;
+      const wx = anchorWX + dx, wy = anchorWY + dy;
+      if (wx < 0 || wx >= W || wy < 0 || wy >= FLOOR_Y) continue;
+      const i = idx(wx, wy);
+      if (grid[i] === EMPTY) continue;
+      // structural cells are not pickupable — domColliderCells (invisible
+      // word ledges) and floorCells (floor) both need to stay put.
+      // Checking both sets rather than the material id alone: VOIDSTONE is
+      // the material used for ledges, but the floor uses its own material
+      // too, and guarding by set membership is safer than guarding by id
+      // (a future material added to one of these structural sets would be
+      // automatically immune without needing a separate id check here).
+      if (domColliderCells.has(i) || floorCells.has(i)) continue;
+      carriedCells.push({ dx, dy, mat: grid[i] });
+      grid[i] = EMPTY;
+      clearSettling(i);
+      wake(wx, wy);   // neighbors need to know this cell is gone (e.g. a compacted pile losing lateral support)
+    }
+  }
+  carrying = carriedCells.length > 0;
+  carryPointerX = clientX; carryPointerY = clientY;
+}
+
+function dropCarry() {
+  if (!carrying) return;
+  const [dropWX, dropWY] = screenToCell(carryPointerX, carryPointerY);
+  for (const cell of carriedCells) {
+    const tx = dropWX + cell.dx, ty = dropWY + cell.dy;
+    if (tx < 0 || tx >= W || ty < 0 || ty >= FLOOR_Y) continue;   // off-world — that cell's material is lost, matches how painting off-world already no-ops
+    const i = idx(tx, ty);
+    if (grid[i] !== EMPTY) continue;   // occupied — no overwrite, same hard rule paintAt follows; that cell's material is lost rather than forced in
+    grid[i] = cell.mat;
+    clearSettling(i);
+    wake(tx, ty);
+  }
+  carrying = false;
+  carriedCells = [];
+  carryCtx.clearRect(0, 0, carryCanvas.width, carryCanvas.height);
+}
+
+// Screen-space draw of the held clump, called once per animation frame
+// from loop() while carrying — reuses the exact same world<->screen
+// conversion worldRectToScreen (below) is built on, so the preview lines
+// up pixel-for-pixel with where the cells will actually land on drop.
+function drawCarryPreview() {
+  carryCtx.clearRect(0, 0, carryCanvas.width, carryCanvas.height);
+  carryGlowCtx.clearRect(0, 0, carryGlowCanvas.width, carryGlowCanvas.height);
+  if (!carrying) return;
+  const rect = canvases[0].getBoundingClientRect();
+  const pxPerWX = rect.width / (VIEW_W * camera.scale);
+  const pxPerWY = rect.height / (VIEW_H * camera.scale);
+  const [anchorWX, anchorWY] = screenToCell(carryPointerX, carryPointerY);
+  for (const cell of carriedCells) {
+    const wx = anchorWX + cell.dx, wy = anchorWY + cell.dy;
+    const sx = rect.left + (wx - camera.x) * pxPerWX;
+    const sy = rect.top + (wy - camera.y) * pxPerWY;
+    const w = Math.ceil(pxPerWX), h = Math.ceil(pxPerWY);
+    const M = MATBY[cell.mat];
+    carryCtx.fillStyle = M.sw;
+    carryCtx.fillRect(Math.round(sx), Math.round(sy), w, h);
+    // Same rect, second canvas — carryGlowCanvas's CSS filter (kept in
+    // sync with #glow's own tuning-panel sliders, see applyGlowFilter
+    // below) does the actual blur/bloom. All 18 rainbow materials are
+    // em:true (checked directly, not assumed — see materials.js), but
+    // guarding on M.em rather than drawing unconditionally means a
+    // future non-emissive material that somehow ends up carryable
+    // won't get a glow it isn't supposed to have.
+    if (M.em) {
+      carryGlowCtx.fillStyle = M.sw;
+      carryGlowCtx.fillRect(Math.round(sx), Math.round(sy), w, h);
+    }
+  }
+}
+
+box.addEventListener("pointerdown", (e) => {
+  pointerDown = true;
+  box.setPointerCapture(e.pointerId);
+  lastPointerX = e.clientX; lastPointerY = e.clientY;
+  const [x, y] = screenToCell(e.clientX, e.clientY);
+  if (x >= 0 && x < W && y >= 0 && y < FLOOR_Y && grid[idx(x, y)] !== EMPTY) {
+    beginCarry(x, y, e.clientX, e.clientY);
+  } else {
+    paintAt(x, y);
+  }
+});
+box.addEventListener("pointermove", (e) => {
+  lastPointerX = e.clientX; lastPointerY = e.clientY;
+  if (!pointerDown) return;
+  if (carrying) {
+    carryPointerX = e.clientX; carryPointerY = e.clientY;   // no grid write while carrying — loop() redraws the preview from this every frame
+    return;
+  }
+  const [x, y] = screenToCell(e.clientX, e.clientY);
+  paintAt(x, y);
+});
+box.addEventListener("pointerup", () => { pointerDown = false; dropCarry(); });
+box.addEventListener("pointercancel", () => { pointerDown = false; dropCarry(); });
+
+// ---- main loop, real elapsed time drives tick count. No ambient rain —
+// sand only appears where it's actually painted now.
+const TICK_MS = 1000 / 60;
+const MAX_TICKS_PER_FRAME = 5;
+let tickAccumulator = 0;
+let lastTime = 0;
+
+const reducedMotion = window.matchMedia
+  && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+let forceRenderNextFrame = false;   // set true by anything that changes render() output WITHOUT touching the grid (currently: the non-emissive glow slider)
+let wasAwakeLastCheck = true;       // conservative default — guarantees the very first loop() call renders regardless
+
+function anyChunkAwake() {
+  for (let i = 0; i < chunkAwake.length; i++) if (chunkAwake[i]) return true;
+  return false;
+}
+
+function loop(now) {
+  const dt = lastTime ? now - lastTime : TICK_MS;
+  lastTime = now;
+  // ELECTRIC RAINBOW MAGIC FORK — continuous pour, matching main.js's
+  // `if(painting) paint()`: once per animation frame, using the LAST
+  // known pointer position, independent of whether it moved this frame.
+  // Placed before the tick loop (and thus before awakeNow below) so a
+  // freshly-painted chunk is visible to THIS frame's render dirty-check,
+  // not one frame late.
+  //   Gated on !carrying — pointerDown stays true for the whole duration
+  // of a carry drag (it's the same gesture, just branched at pointerdown
+  // by what was under the touch), and without this check the currently-
+  // selected palette material would keep pouring at the drag position
+  // every frame WHILE a clump is also being carried. Carry and paint are
+  // mutually exclusive for the lifetime of one pointer gesture.
+  if (pointerDown && !carrying) {
+    const [x, y] = screenToCell(lastPointerX, lastPointerY);
+    paintAt(x, y);
+  }
+  drawCarryPreview();   // no-ops (just clears) when not carrying — cheap, always safe to call
+  tickAccumulator = Math.min(tickAccumulator + dt, TICK_MS * MAX_TICKS_PER_FRAME);
+  while (tickAccumulator >= TICK_MS) {
+    step();
+    tickAccumulator -= TICK_MS;
+  }
+  const awakeNow = anyChunkAwake();
+  // ELECTRIC RAINBOW MAGIC FORK — dirty-check render. render() alone still
+  // walks the full VIEW_W*VIEW_H buffer (~259k cells) every time it runs —
+  // that's the real remaining brute-force cost, and fixing it for real is
+  // dirty-rect territory (extending state.js's subchunkDirty tracking,
+  // currently wired only to the tile-render path which this site doesn't
+  // use, to the base per-cell color/shimmer/glow pass too), not a quick
+  // patch — deliberately not attempted here. What THIS pass fixes: render()
+  // no longer runs at all while nothing's awake, and the two full-grid
+  // scans that used to ride along on every render call (drawChunkDebug's
+  // 66-chunk walk, now deleted entirely — stuck-block bug confirmed
+  // resolved; recomputeCounts' W*H cell scan, now replaced by an exact
+  // incremental counter — see paintedCellCount above and onWorldExit,
+  // state.js) are gone. chunkAwake is real bookkeeping physics.js already
+  // maintains — reading it costs nothing extra, it's not a new scan.
+  //   Render three cases: something's awake right now, something WAS
+  // awake last frame (so the truly final settled frame still gets
+  // painted — skipping one tick too early would freeze the pile
+  // mid-fall, not at rest), or something explicitly asked for a fresh
+  // frame despite the grid being static (forceRenderNextFrame).
+  //   REAL TRADEOFF, not a free lunch: per-cell shimmer and the
+  // world-edge pulse are driven by `frame`/Math.random() INSIDE
+  // render() itself, not by grid state — they currently animate even on
+  // fully settled, unmoving material. Skipping render() while idle means
+  // that twinkle freezes once a pile truly stops moving, resuming the
+  // instant anything wakes a chunk again (new paint, still-settling
+  // sand). Reads as "goes calm when it's calm" for a background
+  // decoration, not a bug — but it IS a visible behavior change from
+  // before, flagging it plainly rather than letting it pass silently.
+  const shouldRender = awakeNow || wasAwakeLastCheck || forceRenderNextFrame;
+  if (shouldRender) {
+    render();
+    forceRenderNextFrame = false;
+  }
+  wasAwakeLastCheck = awakeNow;
+  updateDiag(dt, shouldRender);
+  requestAnimationFrame(loop);
+}
+
+// ---- temporary on-screen diagnostics — same idea as sandbox.html's own
+// #diag strip, so this can be read directly off a phone/tablet screen
+// without needing devtools. Remove once the lag question's settled.
+const diag = document.createElement("div");
+diag.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:9;padding:6px 10px;" +
+  "font:11px monospace;color:#fff;background:rgba(0,0,0,0.6);pointer-events:none;white-space:pre-line;";
+document.body.appendChild(diag);
+let fpsAcc = 0, fpsN = 0, fpsDisplay = 0;
+function updateDiag(dt, rendered) {
+  fpsAcc += dt; fpsN++;
+  if (fpsAcc > 500) { fpsDisplay = Math.round(1000 / (fpsAcc / fpsN)); fpsAcc = 0; fpsN = 0; }
+  let awake = 0;
+  for (let i = 0; i < chunkAwake.length; i++) if (chunkAwake[i]) awake++;
+  // ELECTRIC RAINBOW MAGIC FORK — "filled" used to come from recomputeCounts'
+  // full-grid scan; now it's just the three counters we already maintain
+  // incrementally, added together — O(1), and by construction can never
+  // disagree with paintedCellCount since paintedCellCount IS one of the
+  // three terms, not a derived-then-diffed value anymore.
+  const filled = paintedCellCount + floorCells.size + domColliderCells.size;
+  const rect = canvases[0].getBoundingClientRect();
+  diag.textContent =
+    `fps: ${fpsDisplay}   render: ${rendered ? "live" : "SKIPPED (idle)"}\n` +
+    `camera.scale: ${camera.scale}  x:${camera.x} y:${camera.y}\n` +
+    `CELL_PX: ${CELL_PX}   canvas: ${Math.round(rect.width)}x${Math.round(rect.height)}px   window: ${window.innerWidth}x${window.innerHeight}\n` +
+    `awake chunks: ${awake}/66   filled cells: ${filled}   painted (capped): ${paintedCellCount}/${MAX_LIVE_SAND}   dom-collider cells: ${domColliderCells.size}\n` +
+    `dirty rects: ${flatDirtyRectsEnabled ? "ON" : "off"}`;
+}
+
+render();
+updateDiag(TICK_MS, true);
+if (!reducedMotion) requestAnimationFrame(loop);
+
+// ---- palette UI: real DOM elements, not canvas-drawn — sits above
+// everything, own click handling, never touches the sim's pixels.
+// Deliberately NOT tagged .solid-collider — sand piling up and
+// physically blocking the palette buttons would break the UI, not
+// just look bad.
+const paletteBar = document.createElement("div");
+paletteBar.style.cssText =
+  "position:fixed;top:78px;left:0;right:0;z-index:10;" +
+  "display:flex;gap:8px;padding:8px 12px;justify-content:center;flex-wrap:wrap;pointer-events:none;";
+const swatchEls = [];
+for (const mat of PALETTE) {
+  const sw = document.createElement("div");
+  sw.title = mat.name;
+  sw.style.cssText =
+    `width:30px;height:30px;border-radius:7px;background:${mat.color};cursor:pointer;` +
+    "box-shadow:0 0 0 2px rgba(255,255,255,0.18);pointer-events:auto;transition:box-shadow .12s;";
+  sw.addEventListener("pointerdown", (e) => {
+    e.stopPropagation();
+    selectedMat = mat.id;
+    for (const s of swatchEls) s.style.boxShadow = "0 0 0 2px rgba(255,255,255,0.18)";
+    sw.style.boxShadow = "0 0 0 3px #fff, 0 0 12px 2px #fff";
+  });
+  swatchEls.push(sw);
+  paletteBar.appendChild(sw);
+}
+swatchEls[0].style.boxShadow = "0 0 0 3px #fff, 0 0 12px 2px #fff";   // Sand starts selected
+document.body.appendChild(paletteBar);
+
+// ---- TUNING PANEL — hand-tuning UI for grain size + the glow layer's
+// CSS filter + the non-emissive glow strength (materials.js's `emAmt`,
+// see render.js). Real DOM, own scroll region, collapsible so it doesn't
+// eat screen on phones. Every slider writes straight to the live value it
+// controls and re-derives anything downstream (resizeBox for grain size,
+// style.filter strings for glow) — no page reload needed for any of it.
+// This whole panel is site-only scaffolding, not meant to ship to the
+// real game; the VALUES it lands on are what's meant to port back (see
+// HANDOFF §5-style note at end of session).
+const glowEl = document.getElementById("glow");
+
+// Current live values for the glow layer's three filter components —
+// tracked here (not read back from style.filter, which is a pain to
+// parse) since the panel is the only thing that ever changes them now.
+const glowState = { blur: 5, sat: 1.6, bright: 130 };
+function applyGlowFilter() {
+  const filterStr = `blur(${glowState.blur}px) saturate(${glowState.sat}) brightness(${glowState.bright}%)`;
+  glowEl.style.filter = filterStr;
+  // Carried blobs should read as the same material mid-air, not a
+  // differently-tuned glow — same filter string, second element.
+  carryGlowCanvas.style.filter = filterStr;
+}
+applyGlowFilter();   // carryGlowCanvas has no filter until this runs once — without
+                      // an initial call it'd render un-blurred (a hard-edged bright
+                      // square) for any carry that starts before a slider is touched
+
+const panel = document.createElement("div");
+panel.style.cssText =
+  "position:fixed;bottom:8px;right:8px;z-index:11;width:230px;max-height:70vh;overflow-y:auto;" +
+  "background:rgba(10,7,20,0.88);border:1px solid rgba(255,255,255,0.15);border-radius:8px;" +
+  "padding:8px 10px;font:11px/1.4 'JetBrains Mono',monospace;color:#E8DFFF;pointer-events:auto;";
+
+const panelHeader = document.createElement("div");
+panelHeader.textContent = "TUNING ▾";
+panelHeader.style.cssText = "cursor:pointer;font-weight:600;letter-spacing:0.05em;margin-bottom:4px;user-select:none;";
+const panelBody = document.createElement("div");
+let panelOpen = true;
+panelHeader.addEventListener("pointerdown", (e) => {
+  e.stopPropagation();
+  panelOpen = !panelOpen;
+  panelBody.style.display = panelOpen ? "" : "none";
+  panelHeader.textContent = panelOpen ? "TUNING ▾" : "TUNING ▸";
+});
+panel.appendChild(panelHeader);
+panel.appendChild(panelBody);
+
+// Prevent the sim's own pointerdown painting from firing when the user
+// is just trying to drag a slider — same pattern the palette swatches
+// already use (stopPropagation on pointerdown).
+panel.addEventListener("pointerdown", (e) => e.stopPropagation());
+
+function addSlider(label, min, max, step, value, onInput) {
+  const row = document.createElement("div");
+  row.style.cssText = "margin:6px 0;";
+  const labelEl = document.createElement("div");
+  const valEl = document.createElement("span");
+  valEl.textContent = value;
+  labelEl.textContent = label + ": ";
+  labelEl.appendChild(valEl);
+  labelEl.style.cssText = "margin-bottom:2px;";
+  const input = document.createElement("input");
+  input.type = "range";
+  input.min = min; input.max = max; input.step = step; input.value = value;
+  input.style.cssText = "width:100%;";
+  input.addEventListener("input", () => {
+    const v = parseFloat(input.value);
+    valEl.textContent = v;
+    onInput(v);
+  });
+  row.appendChild(labelEl);
+  row.appendChild(input);
+  panelBody.appendChild(row);
+  return input;
+}
+
+// ELECTRIC RAINBOW MAGIC FORK — checkbox variant, same row/label shape as
+// addSlider above, for boolean toggles (currently just dirty-rects).
+function addCheckbox(label, checked, onChange) {
+  const row = document.createElement("div");
+  row.style.cssText = "margin:6px 0;display:flex;align-items:center;gap:6px;";
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.checked = checked;
+  const labelEl = document.createElement("label");
+  labelEl.textContent = label;
+  input.addEventListener("change", () => onChange(input.checked));
+  row.appendChild(input);
+  row.appendChild(labelEl);
+  panelBody.appendChild(row);
+  return input;
+}
+
+// grainSlider assigned here to the module-level binding declared up by
+// CELL_PX (maybeApplyResponsiveGrain drives this same element on
+// resize/rotation). The onInput callback below is the ONE place that
+// actually changes CELL_PX now — both a manual drag and a responsive
+// re-check funnel through it, so there's only one place that has to
+// remember to call applyDomColliders() after resizeBox().
+//   BUG FIXED here: this previously called resizeBox() only. resizeBox()
+// changes the canvas element's CSS size but nothing about window size,
+// so the resize listener's own applyDomColliders() debounce never fired
+// for a manual grain change — domColliderCells stayed put at the OLD
+// screen<->world ratio while the canvas (and therefore the real text-to-
+// world mapping) had already moved. Grain changes are deliberate,
+// infrequent user actions (not a resize drag), so calling
+// applyDomColliders() directly rather than debouncing is fine here.
+grainSlider = addSlider("Grain size (CELL_PX)", 2, 12, 1, CELL_PX, (v) => {
+  CELL_PX = v;
+  resizeBox();
+  applyDomColliders();
+});
+// Only a genuine user drag should count as an override — dispatching a
+// synthetic "input" event (maybeApplyResponsiveGrain) doesn't fire
+// pointerdown, so the responsive default keeps re-asserting itself
+// until the person actually touches this slider once.
+grainSlider.addEventListener("pointerdown", () => { grainUserOverridden = true; });
+
+const glowHeading = document.createElement("div");
+glowHeading.textContent = "— #glow (base bloom) —";
+glowHeading.style.cssText = "margin-top:8px;opacity:0.7;";
+panelBody.appendChild(glowHeading);
+addSlider("Blur px", 0, 20, 1, glowState.blur, (v) => { glowState.blur = v; applyGlowFilter(); });
+addSlider("Saturate", 0, 3, 0.1, glowState.sat, (v) => { glowState.sat = v; applyGlowFilter(); });
+addSlider("Brightness %", 50, 250, 5, glowState.bright, (v) => { glowState.bright = v; applyGlowFilter(); });
+
+const matHeading = document.createElement("div");
+matHeading.textContent = "— non-emissive glow —";
+matHeading.style.cssText = "margin-top:8px;opacity:0.7;";
+panelBody.appendChild(matHeading);
+addSlider("Sand/Stone/etc strength", 0, 2, 0.05, 1, (v) => {
+  setNonEmissiveGlowMult(v);
+  forceRenderNextFrame = true;   // this changes render() output without touching the grid — the dirty-check (loop(), above) needs an explicit nudge or it'd stay stale while idle
+});
+
+const perfHeading = document.createElement("div");
+perfHeading.textContent = "— perf (site tuning session) —";
+perfHeading.style.cssText = "margin-top:8px;opacity:0.7;";
+panelBody.appendChild(perfHeading);
+// ELECTRIC RAINBOW MAGIC FORK — dirty-rects for render()'s flat pixel pass
+// (render.js). ON-DEVICE VERIFIED this session (Crash): the heat/near-
+// freeze symptom from heavy multi-material coverage got dramatically
+// harder to reproduce with this on. Default flipped ON (render.js) to
+// match — checkbox now starts checked, still here as a real off-switch
+// if a seam/ghosting/stuck-pixel artifact ever turns up around a
+// subchunk boundary, not as a permanent opt-in.
+addCheckbox("Dirty rects (perf, verified on-device)", true, (checked) => {
+  setFlatDirtyRectsEnabled(checked);
+  forceRenderNextFrame = true;   // toggling itself doesn't touch the grid, needs an explicit nudge like the glow slider above
+});
+
+document.body.appendChild(panel);

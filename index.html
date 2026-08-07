@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>The Electric Rainbow Company</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Monoton&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --void: #0A0714;
+    --magenta: #FF2CD9;
+    --cyan: #00E5FF;
+    --gold: #FFCF56;
+    --lilac: #E8DFFF;
+
+    /* rainbow border-frame — also the source-of-truth hex for the five
+       spectrum-color materials in materials.js (kept in sync by hand,
+       CSS vars and the JS material registry don't share storage) */
+    --c-red:    #FF0000;
+    --c-yellow: #F5C518;
+    --c-green:  #3DBF5F;
+    --c-blue:   #2E86F5;
+    --c-purple: #9B4FE0;
+    --band: 1vmin;
+    --sep:  0.43vmin;
+    --radius: 8vmin;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: var(--void);
+    overflow: hidden;
+  }
+
+  body {
+    position: relative;
+  }
+
+  /* ---------- The sim, full screen ---------- */
+  /* Fixed, cropped viewport wrapper — #box is sized in JS (sand-bg.js's
+     resizeBox) to "cover" the window at the sim's real 150:192 pixel
+     aspect ratio, so it fills edge to edge without distorting the
+     pixel art. This wrapper just crops whatever overflows. */
+  #stageWrap {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    z-index: 0;
+  }
+
+  #box {
+    position: fixed;
+    top: 0;
+    left: 0;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* Every canvas render.js draws to — same sizing/position convention
+     the real game uses (see sandbox.html's #box canvas rule): absolute,
+     inset 0, 100% of the sized box, nearest-neighbor scaling so native
+     low-res pixels stay crisp/chunky. */
+  #box canvas {
+    display: block;
+    position: absolute;
+    image-rendering: pixelated;
+  }
+
+  #glow      { filter: blur(5px)  saturate(1.6) brightness(130%); mix-blend-mode: screen; opacity: .95; pointer-events: none; }
+  #blobglow, #laserglow { mix-blend-mode: screen; opacity: .95; pointer-events: none; }
+  #vecOverlay { pointer-events: none; }
+
+  /* ---------- Rainbow border frame ----------
+     Concentric square rings via stacked inset box-shadow: red outside
+     -> black separator -> yellow -> black -> green -> black -> blue ->
+     black -> purple inside. Each shadow is drawn inward from the box
+     edge by its own spread value; earlier shadows in the list paint on
+     top of later ones, so monotonically increasing spread produces
+     clean rings with zero corner miter (unlike border-image, every
+     corner is a plain intersection, rounded by border-radius below).
+     Fully calc()-driven off --band/--sep/--radius — vmin-based, so it
+     holds the same relative thickness at any window size or aspect
+     ratio, edge to edge, all the way around, with no JS. */
+  .rainbow-frame {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5;
+    border-radius: var(--radius);
+    box-shadow:
+      inset 0 0 0 var(--band) var(--c-red),
+      inset 0 0 0 calc(var(--band) + var(--sep)) black,
+      inset 0 0 0 calc(var(--band)*2 + var(--sep)) var(--c-yellow),
+      inset 0 0 0 calc(var(--band)*2 + var(--sep)*2) black,
+      inset 0 0 0 calc(var(--band)*3 + var(--sep)*2) var(--c-green),
+      inset 0 0 0 calc(var(--band)*3 + var(--sep)*3) black,
+      inset 0 0 0 calc(var(--band)*4 + var(--sep)*3) var(--c-blue),
+      inset 0 0 0 calc(var(--band)*4 + var(--sep)*4) black,
+      inset 0 0 0 calc(var(--band)*5 + var(--sep)*4) var(--c-purple);
+  }
+
+  /* ---------- Carry-preview overlay ----------
+     Standalone canvas, deliberately OUTSIDE #box and #box's own five-
+     canvas render.js stack — the carried clump is a tiny (<=~radius-6
+     disc worth of cells) site-only interaction concern with nothing to
+     do with the sim's own render pipeline, and keeping it fully separate
+     means it can't accidentally interact with dirty-rects/shimmer/glow
+     or any future render.js change. Sized to the raw viewport in
+     sand-bg.js (not VIEW_W*CELL_PX like #box's canvases), since it draws
+     in plain screen space via the same world->screen math worldRectToScreen
+     already uses, not the sim's internal cell grid. */
+  #carryOverlay {
+    position: fixed;
+    inset: 0;
+    z-index: 6;
+    pointer-events: none;
+    image-rendering: pixelated;
+  }
+
+  /* ---------- Carry-glow overlay ----------
+     A picked-up blob was rendering flat with no glow at all — carrying
+     lifts material clear off the grid (see beginCarry, sand-bg.js), and
+     the grid is the only thing render.js's real #glow layer ever draws
+     from. This is the exact same base+glow duplicate-canvas trick
+     render.js already uses three times over (#glow, #blobglow,
+     #laserglow): sand-bg.js's drawCarryPreview() draws the identical
+     solid rects into THIS canvas too, and the blur/saturate/brightness
+     filter + screen blend below does the actual glow. Default filter
+     values match #glow's own defaults; sand-bg.js's applyGlowFilter()
+     keeps both in sync with the tuning panel's glow sliders afterward,
+     so a carried blob reads as the same material mid-air, not a
+     differently-tuned one. */
+  #carryGlow {
+    position: fixed;
+    inset: 0;
+    z-index: 7;
+    pointer-events: none;
+    image-rendering: pixelated;
+    filter: blur(5px) saturate(1.6) brightness(130%);
+    mix-blend-mode: screen;
+    opacity: .95;
+  }
+
+  /* ---------- Wordmark, floating above the sim ---------- */
+  .stage {
+    position: fixed;
+    inset: 0;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 0 6vw;
+    pointer-events: none;
+  }
+
+  h1 {
+    margin: 0;
+    max-width: 90vw;
+    font-family: 'Monoton', cursive;
+    font-weight: 500;
+    font-size: clamp(1.5rem, 6.4vw, 3.6rem);
+    line-height: 1.2;
+    letter-spacing: 0.01em;
+    background: linear-gradient(100deg, var(--magenta), var(--cyan), var(--gold), var(--magenta));
+    background-size: 300% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: shimmer 10s ease-in-out infinite;
+    text-shadow: 0 0 40px rgba(255, 44, 217, 0.35);
+  }
+
+  @keyframes shimmer {
+    0%   { background-position: 0% 50%; }
+    50%  { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    h1 { animation: none !important; }
+  }
+
+  /* ---------- Page nav ----------
+     Same simple two-link pattern on both pages, not a shared component
+     yet — two links isn't worth a module. If a third experiment shows
+     up, THIS is the point to build the real "opening UI"/switcher
+     instead of copy-pasting a third link. */
+  .page-nav {
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    z-index: 12;
+    font: 12px/1.4 'JetBrains Mono', monospace;
+    letter-spacing: 0.04em;
+  }
+  .page-nav a {
+    color: var(--lilac);
+    text-decoration: none;
+    opacity: 0.7;
+    border-bottom: 1px solid rgba(232,223,255,0.3);
+    padding-bottom: 1px;
+  }
+  .page-nav a:hover { opacity: 1; }
+</style>
+</head>
+<body>
+
+  <div id="stageWrap">
+    <div id="box">
+      <canvas id="base"></canvas>
+      <canvas id="glow"></canvas>
+      <canvas id="blobglow"></canvas>
+      <canvas id="laserglow"></canvas>
+      <canvas id="vecOverlay"></canvas>
+    </div>
+  </div>
+
+  <div class="stage">
+    <h1><span class="solid-collider">The</span> <span class="solid-collider">Electric</span> <span class="solid-collider">Rainbow</span> <span class="solid-collider">Company</span></h1>
+  </div>
+
+  <div class="rainbow-frame"></div>
+
+  <canvas id="carryOverlay"></canvas>
+  <canvas id="carryGlow"></canvas>
+
+  <nav class="page-nav"><a href="./plants.html">growth lab &rarr;</a></nav>
+
+  <script type="module" src="./js/sand-bg.js"></script>
+
+</body>
+</html>
