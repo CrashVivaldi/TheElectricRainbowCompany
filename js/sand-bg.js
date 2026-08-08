@@ -349,6 +349,16 @@ function applyDomColliders() {
     const wx1 = Math.ceil(camera.x + (r.right - rect0.left) / rect0.width * VIEW_W * camera.scale);
     placeLedge(wx0, wx1, screenYToWorldRow(r.bottom));
   }
+
+  // Continuous shelf along the inner bottom edge of the rainbow frame —
+  // sand piles here and reads as sitting on top of the border. Spans the
+  // visible floor between the side drain holes (same x-range as buildFloor
+  // stone), anchored to the frame inset, not the viewport edge.
+  const frameBottomScreenY = window.innerHeight - rainbowFrameInsetPx();
+  const viewLeft = Math.floor(camera.x);
+  const viewRight = Math.ceil(camera.x + VIEW_W * camera.scale);
+  const edgeW = edgeHoleWorldWidth();
+  placeLedge(viewLeft + edgeW, viewRight - edgeW, screenYToWorldRow(frameBottomScreenY));
 }
 
 function screenXToWorldX(screenX) {
