@@ -197,6 +197,35 @@
     h1 {
       font-size: clamp(1rem, 4.29vw, 2.41rem);
     }
+    .contact-link {
+      font-size: clamp(0.6rem, 2.15vw, 1.07rem);
+    }
+  }
+
+  /* ---------- Contact link ---------- */
+  .contact-link {
+    position: fixed;
+    top: calc(var(--frame-inset) + 10px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 12;
+    font-family: 'Monoton', cursive;
+    font-weight: 500;
+    font-size: clamp(0.9rem, 3.2vw, 1.6rem);
+    letter-spacing: 0.01em;
+    text-decoration: none;
+    background: linear-gradient(100deg, var(--magenta), var(--cyan), var(--gold), var(--magenta));
+    background-size: 300% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: shimmer 10s ease-in-out infinite;
+    pointer-events: auto;
+  }
+  .contact-link:hover { filter: brightness(1.15); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .contact-link { animation: none !important; }
   }
 
   /* ---------- Page nav ----------
@@ -279,6 +308,8 @@
   </div>
 
   <div class="rainbow-frame"></div>
+
+  <a class="contact-link" href="mailto:TheElectricRainbowCompany@proton.me">contact</a>
 
   <canvas id="carryOverlay"></canvas>
   <canvas id="carryGlow"></canvas>
