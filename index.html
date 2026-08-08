@@ -22,23 +22,10 @@
     --c-green:  #3DBF5F;
     --c-blue:   #2E86F5;
     --c-purple: #9B4FE0;
-    /* EXPERIMENTAL: values updated to match the SVG border export
-       (rainbow-border-project.json: band 0.005, sep 0.01, radius 0.08 —
-       all *100 for vmin-equivalent). These still drive real, non-visual
-       logic even though the box-shadow rule below is disabled: sand-bg.js's
-       rainbowFrameInsetPx() reads --band/--sep directly for the DOM-collider
-       and floor-drain-padding boundary, and --frame-inset below (palette
-       positioning) is calc()'d from them too. If the SVG border data ever
-       changes, these three values must be updated to match by hand — nothing
-       enforces the pairing. Old values, for revert: 1vmin / 0.43vmin / 8vmin.
-       New total inset: 6.5vmin vs old 6.72vmin (~3% thinner, incidental). */
-    --band: 0.5vmin;
-    --sep:  1vmin;
+    --band: 1vmin;
+    --sep:  0.43vmin;
     --radius: 8vmin;
     --frame-inset: calc(5 * var(--band) + 4 * var(--sep));
-    --floor-gap: 42vmin;
-    --notch-curve: 9vmin;
-    --notch-flare: 6vmin;
   }
 
   * { box-sizing: border-box; }
@@ -102,11 +89,6 @@
      Fully calc()-driven off --band/--sep/--radius — vmin-based, so it
      holds the same relative thickness at any window size or aspect
      ratio, edge to edge, all the way around, with no JS. */
-  /* DISABLED for the SVG border experiment — kept intact, not deleted, for
-     a one-line revert (just uncomment this block and delete/comment the
-     #svgRainbowFrame rule + <script src="./js/svg-border.js"> tag below).
-     NOTE: this version has the live floor-drain notch (clip-path driven by
-     --floor-gap from sand-bg.js) that the SVG replacement does NOT have yet.
   .rainbow-frame {
     position: fixed;
     inset: 0;
@@ -123,35 +105,6 @@
       inset 0 0 0 calc(var(--band)*4 + var(--sep)*3) var(--c-blue),
       inset 0 0 0 calc(var(--band)*4 + var(--sep)*4) black,
       inset 0 0 0 calc(var(--band)*5 + var(--sep)*4) var(--c-purple);
-    clip-path: polygon(
-      0% 0%, 100% 0%, 100% 100%,
-      calc(50% + var(--floor-gap) / 2 + var(--notch-flare)) 100%,
-      calc(50% + var(--floor-gap) / 2 + var(--notch-flare) * 0.4) calc(100% - var(--notch-curve) * 0.55),
-      calc(50% + var(--floor-gap) / 2) calc(100% - var(--notch-curve) * 0.85),
-      calc(50% + var(--floor-gap) / 2 - var(--notch-flare) * 0.3) calc(100% - var(--notch-curve)),
-      50% calc(100% - var(--notch-curve) * 1.05),
-      calc(50% - var(--floor-gap) / 2 + var(--notch-flare) * 0.3) calc(100% - var(--notch-curve)),
-      calc(50% - var(--floor-gap) / 2) calc(100% - var(--notch-curve) * 0.85),
-      calc(50% - var(--floor-gap) / 2 - var(--notch-flare) * 0.4) calc(100% - var(--notch-curve) * 0.55),
-      calc(50% - var(--floor-gap) / 2 - var(--notch-flare)) 100%,
-      0% 100%
-    );
-  }
-  */
-
-  /* EXPERIMENTAL: SVG replacement, painted by js/svg-border.js. Same box
-     and stacking position the old .rainbow-frame had; no clip-path notch
-     (see file header comment in svg-border.js for why). Width/height are
-     set from window.innerHeight in JS — not 100vh — so iOS landscape
-     doesn't paint the border below the visible viewport. */
-  #svgRainbowFrame {
-    position: fixed;
-    top: 0;
-    left: 0;
-    pointer-events: none;
-    z-index: 5;
-    display: block;
-    overflow: hidden;
   }
 
   /* ---------- Carry-preview overlay ----------
@@ -213,6 +166,9 @@
   h1 {
     margin: 0;
     max-width: 90vw;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
     font-family: 'Monoton', cursive;
     font-weight: 500;
     font-size: clamp(1.5rem, 6.4vw, 3.6rem);
@@ -235,6 +191,41 @@
 
   @media (prefers-reduced-motion: reduce) {
     h1 { animation: none !important; }
+  }
+
+  @media (orientation: landscape) {
+    h1 {
+      font-size: clamp(1rem, 4.29vw, 2.41rem);
+    }
+    .contact-link {
+      font-size: clamp(0.6rem, 2.15vw, 1.07rem);
+    }
+  }
+
+  /* ---------- Contact link ---------- */
+  .contact-link {
+    position: fixed;
+    top: calc(var(--frame-inset) + 10px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 12;
+    font-family: 'Monoton', cursive;
+    font-weight: 500;
+    font-size: clamp(0.9rem, 3.2vw, 1.6rem);
+    letter-spacing: 0.01em;
+    text-decoration: none;
+    background: linear-gradient(100deg, var(--magenta), var(--cyan), var(--gold), var(--magenta));
+    background-size: 300% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: shimmer 10s ease-in-out infinite;
+    pointer-events: auto;
+  }
+  .contact-link:hover { filter: brightness(1.15); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .contact-link { animation: none !important; }
   }
 
   /* ---------- Page nav ----------
@@ -308,17 +299,22 @@
   </div>
 
   <div class="stage">
-    <h1><span class="solid-collider">The</span> <span class="solid-collider">Electric</span> <span class="solid-collider">Rainbow</span> <span class="solid-collider">Company</span></h1>
+    <h1>
+      <span class="solid-collider">The</span>
+      <span class="title-subline">
+        <span class="solid-collider">Electric</span> <span class="solid-collider">Rainbow</span> <span class="solid-collider">Company</span>
+      </span>
+    </h1>
   </div>
 
-  <!-- EXPERIMENTAL: svg-border.js replaces this node with an <svg id="svgRainbowFrame">
-       on load. Was: <div class="rainbow-frame"></div> — see disabled CSS block above. -->
+  <div class="rainbow-frame"></div>
+
+  <a class="contact-link" href="mailto:TheElectricRainbowCompany@proton.me">contact</a>
 
   <canvas id="carryOverlay"></canvas>
   <canvas id="carryGlow"></canvas>
 
   <script type="module" src="./js/sand-bg.js"></script>
-  <script src="./js/svg-border.js"></script>
 
 </body>
 </html>
