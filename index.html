@@ -26,9 +26,6 @@
     --sep:  0.43vmin;
     --radius: 8vmin;
     --frame-inset: calc(5 * var(--band) + 4 * var(--sep));
-    --floor-gap: 42vmin;
-    --notch-curve: 9vmin;
-    --notch-flare: 6vmin;
   }
 
   * { box-sizing: border-box; }
@@ -108,26 +105,6 @@
       inset 0 0 0 calc(var(--band)*4 + var(--sep)*3) var(--c-blue),
       inset 0 0 0 calc(var(--band)*4 + var(--sep)*4) black,
       inset 0 0 0 calc(var(--band)*5 + var(--sep)*4) var(--c-purple);
-    /* Cuts a smooth notch straight out of the border rings themselves
-       (not an overlay) so the frame appears to bend away and dive out
-       of view on both sides of the floor drain, leaving the gap in
-       between genuinely open — nothing painted there at all. Width
-       tracks --floor-gap (set live in sand-bg.js from the title's
-       measured layout box), so the notch always matches the actual
-       drain hole in the sim underneath. */
-    clip-path: polygon(
-      0% 0%, 100% 0%, 100% 100%,
-      calc(50% + var(--floor-gap) / 2 + var(--notch-flare)) 100%,
-      calc(50% + var(--floor-gap) / 2 + var(--notch-flare) * 0.4) calc(100% - var(--notch-curve) * 0.55),
-      calc(50% + var(--floor-gap) / 2) calc(100% - var(--notch-curve) * 0.85),
-      calc(50% + var(--floor-gap) / 2 - var(--notch-flare) * 0.3) calc(100% - var(--notch-curve)),
-      50% calc(100% - var(--notch-curve) * 1.05),
-      calc(50% - var(--floor-gap) / 2 + var(--notch-flare) * 0.3) calc(100% - var(--notch-curve)),
-      calc(50% - var(--floor-gap) / 2) calc(100% - var(--notch-curve) * 0.85),
-      calc(50% - var(--floor-gap) / 2 - var(--notch-flare) * 0.4) calc(100% - var(--notch-curve) * 0.55),
-      calc(50% - var(--floor-gap) / 2 - var(--notch-flare)) 100%,
-      0% 100%
-    );
   }
 
   /* ---------- Carry-preview overlay ----------

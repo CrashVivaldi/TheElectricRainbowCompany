@@ -300,24 +300,6 @@ function clearDomColliders() {
   domColliderCells.clear();
 }
 
-// Rows at/just above the floor row — no invisible Voidstone shelves here.
-// Word play shelves live under the title (mid-screen); bottom drain holes
-// are EMPTY floor cells only. This band catches any stale bottom ledges
-// from earlier builds or missed tracking on resize.
-const FLOOR_LEDGE_ZONE_TOP = FLOOR_Y - 10;
-
-function purgeVoidstoneInFloorZone() {
-  for (let y = FLOOR_LEDGE_ZONE_TOP; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const i = idx(x, y);
-      if (grid[i] !== VOIDSTONE) continue;
-      grid[i] = EMPTY;
-      domColliderCells.delete(i);
-      wake(x, y);
-    }
-  }
-}
-
 // How thick (world cells) the invisible footing under each text collider
 // is. Independent of CELL_PX (that's screen pixels per cell, this is
 // world-space) — stays a small, thin strip regardless of grain size.
@@ -340,7 +322,6 @@ function rainbowFrameInsetPx() {
 
 function applyDomColliders() {
   clearDomColliders();
-  purgeVoidstoneInFloorZone();
   const rect0 = canvases[0].getBoundingClientRect();
   const els = document.querySelectorAll(".solid-collider");
 
@@ -350,8 +331,6 @@ function applyDomColliders() {
 
   function placeLedge(wx0, wx1, wyBottom) {
     const wy0 = wyBottom - COLLIDER_LEDGE_THICKNESS;
-    // Word shelves only — never recreate the old bottom-border footing.
-    if (wy0 >= FLOOR_LEDGE_ZONE_TOP) return;
     for (let y = wy0; y < wyBottom; y++) {
       for (let x = wx0; x < wx1; x++) {
         if (x < 0 || x >= W || y < 0 || y >= H) continue;
@@ -406,11 +385,6 @@ function mergeHoleRanges(ranges) {
   return merged;
 }
 
-function updateFloorGapCss(titleRect) {
-  const pad = rainbowFrameInsetPx() * 0.3;
-  document.documentElement.style.setProperty("--floor-gap", `${titleRect.width + pad * 2}px`);
-}
-
 function buildFloor() {
   if (usingInitialGrid) return;
   clearFloorRow();
@@ -425,16 +399,6 @@ function buildFloor() {
   const viewLeft = Math.floor(camera.x);
   const viewRight = Math.ceil(camera.x + VIEW_W * camera.scale);
   const holes = [[viewLeft, viewLeft + edgeW], [viewRight - edgeW, viewRight]];
-
-  const title = document.querySelector(".stage h1");
-  if (title) {
-    const r = title.getBoundingClientRect();
-    holes.push([
-      Math.max(0, Math.floor(screenXToWorldX(r.left)) - 1),
-      Math.min(W, Math.ceil(screenXToWorldX(r.right)) + 1),
-    ]);
-    updateFloorGapCss(r);
-  }
 
   const merged = mergeHoleRanges(holes);
   const inHole = (x) => merged.some(([a, b]) => x >= a && x < b);
