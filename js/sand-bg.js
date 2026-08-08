@@ -415,7 +415,16 @@ function buildFloor() {
   if (usingInitialGrid) return;
   clearFloorRow();
   const edgeW = edgeHoleWorldWidth();
-  const holes = [[0, edgeW], [W - edgeW, W]];
+  // Edge holes must line up with the SCREEN edges, not the world's true
+  // edges — the camera only ever shows a cropped middle slice of the
+  // wider world (camera.x .. camera.x+VIEW_W*camera.scale), so a hole
+  // placed at world x=0/W sits far outside anything visible. Floor rows
+  // outside the visible slice are unreachable anyway (painting/screen
+  // math only ever produces world coords inside it), so it's safe to
+  // only build floor within that range.
+  const viewLeft = Math.floor(camera.x);
+  const viewRight = Math.ceil(camera.x + VIEW_W * camera.scale);
+  const holes = [[viewLeft, viewLeft + edgeW], [viewRight - edgeW, viewRight]];
 
   const title = document.querySelector(".stage h1");
   if (title) {
@@ -430,7 +439,7 @@ function buildFloor() {
   const merged = mergeHoleRanges(holes);
   const inHole = (x) => merged.some(([a, b]) => x >= a && x < b);
 
-  for (let x = 0; x < W; x++) {
+  for (let x = viewLeft; x < viewRight; x++) {
     if (inHole(x)) continue;
     const i = idx(x, FLOOR_Y);
     grid[i] = STONE;

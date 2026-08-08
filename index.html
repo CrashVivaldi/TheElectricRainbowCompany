@@ -27,6 +27,8 @@
     --radius: 8vmin;
     --frame-inset: calc(5 * var(--band) + 4 * var(--sep));
     --floor-gap: 42vmin;
+    --notch-curve: 9vmin;
+    --notch-flare: 6vmin;
   }
 
   * { box-sizing: border-box; }
@@ -106,42 +108,26 @@
       inset 0 0 0 calc(var(--band)*4 + var(--sep)*3) var(--c-blue),
       inset 0 0 0 calc(var(--band)*4 + var(--sep)*4) black,
       inset 0 0 0 calc(var(--band)*5 + var(--sep)*4) var(--c-purple);
-  }
-
-  /* Bottom-center notch — void overlay eats the rainbow bands so the
-     border appears to curve down off-screen on both sides of the floor
-     drain. Width synced from sand-bg.js to match the center floor hole. */
-  .rainbow-floor-notch {
-    position: fixed;
-    bottom: calc(-1 * var(--frame-inset));
-    left: 50%;
-    transform: translateX(-50%);
-    width: var(--floor-gap);
-    height: calc(var(--frame-inset) * 2.8);
-    z-index: 6;
-    pointer-events: none;
-    background: var(--void);
-    border-radius: 50% 50% 0 0 / 72% 72% 0 0;
-  }
-  .rainbow-floor-notch::before,
-  .rainbow-floor-notch::after {
-    content: "";
-    position: absolute;
-    bottom: calc(var(--frame-inset) * 0.85);
-    width: calc(var(--frame-inset) * 1.6);
-    height: calc(var(--frame-inset) * 2.2);
-    background: var(--void);
-    pointer-events: none;
-  }
-  .rainbow-floor-notch::before {
-    right: 100%;
-    margin-right: -1px;
-    border-bottom-right-radius: 100% 80%;
-  }
-  .rainbow-floor-notch::after {
-    left: 100%;
-    margin-left: -1px;
-    border-bottom-left-radius: 100% 80%;
+    /* Cuts a smooth notch straight out of the border rings themselves
+       (not an overlay) so the frame appears to bend away and dive out
+       of view on both sides of the floor drain, leaving the gap in
+       between genuinely open — nothing painted there at all. Width
+       tracks --floor-gap (set live in sand-bg.js from the title's
+       measured layout box), so the notch always matches the actual
+       drain hole in the sim underneath. */
+    clip-path: polygon(
+      0% 0%, 100% 0%, 100% 100%,
+      calc(50% + var(--floor-gap) / 2 + var(--notch-flare)) 100%,
+      calc(50% + var(--floor-gap) / 2 + var(--notch-flare) * 0.4) calc(100% - var(--notch-curve) * 0.55),
+      calc(50% + var(--floor-gap) / 2) calc(100% - var(--notch-curve) * 0.85),
+      calc(50% + var(--floor-gap) / 2 - var(--notch-flare) * 0.3) calc(100% - var(--notch-curve)),
+      50% calc(100% - var(--notch-curve) * 1.05),
+      calc(50% - var(--floor-gap) / 2 + var(--notch-flare) * 0.3) calc(100% - var(--notch-curve)),
+      calc(50% - var(--floor-gap) / 2) calc(100% - var(--notch-curve) * 0.85),
+      calc(50% - var(--floor-gap) / 2 - var(--notch-flare) * 0.4) calc(100% - var(--notch-curve) * 0.55),
+      calc(50% - var(--floor-gap) / 2 - var(--notch-flare)) 100%,
+      0% 100%
+    );
   }
 
   /* ---------- Carry-preview overlay ----------
@@ -302,7 +288,6 @@
   </div>
 
   <div class="rainbow-frame"></div>
-  <div class="rainbow-floor-notch" aria-hidden="true"></div>
 
   <canvas id="carryOverlay"></canvas>
   <canvas id="carryGlow"></canvas>
