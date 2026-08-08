@@ -320,6 +320,15 @@ function rainbowFrameInsetPx() {
   return 5 * band + 4 * sep;
 }
 
+function rainbowFrameBottomLiftPx() {
+  const root = getComputedStyle(document.documentElement);
+  const val = (root.getPropertyValue("--outer-border") || "2px").trim();
+  if (val.endsWith("px")) return parseFloat(val);
+  const vmin = Math.min(window.innerWidth, window.innerHeight) / 100;
+  if (val.endsWith("vmin")) return parseFloat(val) * vmin;
+  return parseFloat(val);
+}
+
 function applyDomColliders() {
   clearDomColliders();
   const rect0 = canvases[0].getBoundingClientRect();
@@ -388,7 +397,7 @@ function applyDomColliders() {
   // Continuous shelf along the inner bottom edge of the rainbow frame —
   // sand piles here and reads as sitting on top of the border. Ends where
   // the inner left/right border rings begin; outside that is void.
-  const frameBottomScreenY = window.innerHeight - rainbowFrameInsetPx();
+  const frameBottomScreenY = window.innerHeight - rainbowFrameBottomLiftPx() - rainbowFrameInsetPx();
   const inner = rainbowFrameInnerXRange();
   placeLedge(inner.wx0, inner.wx1, screenYToWorldRow(frameBottomScreenY));
 }

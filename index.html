@@ -82,19 +82,16 @@
   /* ---------- Rainbow border frame ----------
      Concentric square rings via stacked inset box-shadow: red outside
      -> black separator -> yellow -> black -> green -> black -> blue ->
-     black -> purple inside. A 2px black strip on the bottom edge only
-     (::after) — inset box-shadow cannot target a single side. Each
-     shadow is drawn inward from the box
-     edge by its own spread value; earlier shadows in the list paint on
-     top of later ones, so monotonically increasing spread produces
-     clean rings with zero corner miter (unlike border-image, every
-     corner is a plain intersection, rounded by border-radius below).
-     Fully calc()-driven off --band/--sep/--radius — vmin-based, so it
-     holds the same relative thickness at any window size or aspect
-     ratio, edge to edge, all the way around, with no JS. */
+     black -> purple inside. A 2px black strip fills the gap below the
+     frame (::after, fixed to the viewport bottom) so the outer red band
+     is not covered or clipped at the screen edge. Rings are fully
+     calc()-driven off --band/--sep/--radius. */
   .rainbow-frame {
     position: fixed;
-    inset: 0;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: var(--outer-border);
     pointer-events: none;
     z-index: 5;
     border-radius: var(--radius);
@@ -112,13 +109,14 @@
 
   .rainbow-frame::after {
     content: "";
-    position: absolute;
+    position: fixed;
     left: 0;
     right: 0;
     bottom: 0;
     height: var(--outer-border);
     background: black;
-    border-radius: 0 0 var(--radius) var(--radius);
+    pointer-events: none;
+    z-index: 5;
   }
 
   /* ---------- Carry-preview overlay ----------
@@ -284,7 +282,7 @@
     flex-direction: column;
   }
   .palette-gases {
-    bottom: calc(var(--frame-inset) + 10px);
+    bottom: calc(var(--outer-border) + var(--frame-inset) + 10px);
     left: 50%;
     transform: translateX(-50%);
     flex-direction: row;
