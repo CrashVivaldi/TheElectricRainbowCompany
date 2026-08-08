@@ -350,9 +350,9 @@ function applyDomColliders() {
     return Math.ceil(camera.x + (screenX - rect0.left) / rect0.width * VIEW_W * camera.scale);
   }
 
-  // Ledge raised 20% toward the letters (was 40%, lowered by half).
+  // Ledge raised 10% toward the letters (lowered again from 20%).
   function ledgeScreenYForRect(r) {
-    return r.bottom - (r.bottom - r.top) * 0.2;
+    return r.bottom - (r.bottom - r.top) * 0.1;
   }
 
   const LETTER_LEDGE_WIDTH_INSET = 0.12;   // narrow each letter shelf slightly

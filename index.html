@@ -193,6 +193,12 @@
     h1 { animation: none !important; }
   }
 
+  @media (orientation: landscape) {
+    h1 {
+      font-size: clamp(1rem, 4.29vw, 2.41rem);
+    }
+  }
+
   /* ---------- Page nav ----------
      Same simple two-link pattern on both pages, not a shared component
      yet — two links isn't worth a module. If a third experiment shows
