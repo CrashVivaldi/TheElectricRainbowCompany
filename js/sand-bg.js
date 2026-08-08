@@ -343,11 +343,44 @@ function applyDomColliders() {
     }
   }
 
+  function screenXToWorldXLocal(screenX) {
+    return Math.floor(camera.x + (screenX - rect0.left) / rect0.width * VIEW_W * camera.scale);
+  }
+  function screenXToWorldXLocalEnd(screenX) {
+    return Math.ceil(camera.x + (screenX - rect0.left) / rect0.width * VIEW_W * camera.scale);
+  }
+
+  // Ledge sits 40% closer to the letters than the span's bottom edge —
+  // pulls the footing up into the word instead of hanging below the box.
+  function ledgeScreenYForRect(r) {
+    return r.bottom - (r.bottom - r.top) * 0.4;
+  }
+
+  // One footing segment per letter (gaps between letters are holes).
+  function forEachLetterRect(el, cb) {
+    const node = el.firstChild;
+    if (!node || node.nodeType !== Node.TEXT_NODE) {
+      cb(el.getBoundingClientRect());
+      return;
+    }
+    const range = document.createRange();
+    for (let i = 0; i < node.textContent.length; i++) {
+      range.setStart(node, i);
+      range.setEnd(node, i + 1);
+      const r = range.getBoundingClientRect();
+      if (r.width <= 0 && r.height <= 0) continue;
+      cb(r);
+    }
+  }
+
   for (const el of els) {
-    const r = el.getBoundingClientRect();
-    const wx0 = Math.floor(camera.x + (r.left - rect0.left) / rect0.width * VIEW_W * camera.scale);
-    const wx1 = Math.ceil(camera.x + (r.right - rect0.left) / rect0.width * VIEW_W * camera.scale);
-    placeLedge(wx0, wx1, screenYToWorldRow(r.bottom));
+    forEachLetterRect(el, (r) => {
+      placeLedge(
+        screenXToWorldXLocal(r.left),
+        screenXToWorldXLocalEnd(r.right),
+        screenYToWorldRow(ledgeScreenYForRect(r)),
+      );
+    });
   }
 
   // Continuous shelf along the inner bottom edge of the rainbow frame —
