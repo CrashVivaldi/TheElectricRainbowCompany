@@ -25,6 +25,7 @@
     --band: 1vmin;
     --sep:  0.43vmin;
     --radius: 8vmin;
+    --frame-inset: calc(5 * var(--band) + 4 * var(--sep));
   }
 
   * { box-sizing: border-box; }
@@ -210,6 +211,41 @@
     padding-bottom: 1px;
   }
   .page-nav a:hover { opacity: 1; }
+
+  /* ---------- Material palette (sand-bg.js) ----------
+     Three groups inset inside the rainbow frame's inner purple edge. */
+  .palette-group {
+    position: fixed;
+    z-index: 10;
+    display: flex;
+    gap: 8px;
+    pointer-events: none;
+  }
+  .palette-sands {
+    top: calc(var(--frame-inset) + 10px);
+    left: calc(var(--frame-inset) + 10px);
+    flex-direction: column;
+  }
+  .palette-liquids {
+    top: calc(var(--frame-inset) + 10px);
+    right: calc(var(--frame-inset) + 10px);
+    flex-direction: column;
+  }
+  .palette-gases {
+    bottom: calc(var(--frame-inset) + 10px);
+    left: 50%;
+    transform: translateX(-50%);
+    flex-direction: row;
+  }
+  .palette-swatch {
+    width: 30px;
+    height: 30px;
+    border-radius: 7px;
+    cursor: pointer;
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.18);
+    pointer-events: auto;
+    transition: box-shadow 0.12s;
+  }
 </style>
 </head>
 <body>
@@ -232,8 +268,6 @@
 
   <canvas id="carryOverlay"></canvas>
   <canvas id="carryGlow"></canvas>
-
-  <nav class="page-nav"><a href="./plants.html">growth lab &rarr;</a></nav>
 
   <script type="module" src="./js/sand-bg.js"></script>
 
