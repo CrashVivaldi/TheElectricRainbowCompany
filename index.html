@@ -27,6 +27,26 @@
     --outer-border: 2px;
     --radius: 8vmin;
     --frame-inset: calc(5 * var(--band) + 4 * var(--sep));
+
+    /* Border glow — box-shadow blur only (no filter; iOS-safe). */
+    --glow-tight: 0.5vmin;
+    --glow-mid: 1.4vmin;
+    --glow-wide: 3vmin;
+    --glow-r:  rgba(255, 0, 0, 0.95);
+    --glow-rm: rgba(255, 0, 0, 0.7);
+    --glow-rf: rgba(255, 0, 0, 0.4);
+    --glow-y:  rgba(245, 197, 24, 0.95);
+    --glow-ym: rgba(245, 197, 24, 0.7);
+    --glow-yf: rgba(245, 197, 24, 0.4);
+    --glow-g:  rgba(61, 191, 95, 0.95);
+    --glow-gm: rgba(61, 191, 95, 0.7);
+    --glow-gf: rgba(61, 191, 95, 0.4);
+    --glow-b:  rgba(46, 134, 245, 0.95);
+    --glow-bm: rgba(46, 134, 245, 0.7);
+    --glow-bf: rgba(46, 134, 245, 0.4);
+    --glow-p:  rgba(155, 79, 224, 0.95);
+    --glow-pm: rgba(155, 79, 224, 0.7);
+    --glow-pf: rgba(155, 79, 224, 0.4);
   }
 
   * { box-sizing: border-box; }
@@ -84,8 +104,9 @@
      -> black separator -> yellow -> black -> green -> black -> blue ->
      black -> purple inside. A 2px black strip fills the gap below the
      frame (::after, fixed to the viewport bottom) so the outer red band
-     is not covered or clipped at the screen edge. Rings are fully
-     calc()-driven off --band/--sep/--radius. */
+     is not covered or clipped at the screen edge. Intense bloom via
+     ::before box-shadow blur layers (no CSS filter — iOS-safe). Rings
+     are fully calc()-driven off --band/--sep/--radius. */
   .rainbow-frame {
     position: fixed;
     top: 0;
@@ -95,6 +116,8 @@
     pointer-events: none;
     z-index: 5;
     border-radius: var(--radius);
+    -webkit-transform: translateZ(0);
+    transform: translateZ(0);
     box-shadow:
       inset 0 0 0 var(--band) var(--c-red),
       inset 0 0 0 calc(var(--band) + var(--sep)) black,
@@ -105,6 +128,41 @@
       inset 0 0 0 calc(var(--band)*4 + var(--sep)*3) var(--c-blue),
       inset 0 0 0 calc(var(--band)*4 + var(--sep)*4) black,
       inset 0 0 0 calc(var(--band)*5 + var(--sep)*4) var(--c-purple);
+  }
+
+  .rainbow-frame::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    box-shadow:
+      /* outer neon — each spectrum band, three falloff tiers */
+      0 0 var(--glow-tight) 1px var(--glow-r),
+      0 0 var(--glow-mid) 3px var(--glow-rm),
+      0 0 var(--glow-wide) 6px var(--glow-rf),
+      0 0 var(--glow-tight) 1px var(--glow-y),
+      0 0 var(--glow-mid) 3px var(--glow-ym),
+      0 0 var(--glow-wide) 6px var(--glow-yf),
+      0 0 var(--glow-tight) 1px var(--glow-g),
+      0 0 var(--glow-mid) 3px var(--glow-gm),
+      0 0 var(--glow-wide) 6px var(--glow-gf),
+      0 0 var(--glow-tight) 1px var(--glow-b),
+      0 0 var(--glow-mid) 3px var(--glow-bm),
+      0 0 var(--glow-wide) 6px var(--glow-bf),
+      0 0 var(--glow-tight) 1px var(--glow-p),
+      0 0 var(--glow-mid) 3px var(--glow-pm),
+      0 0 var(--glow-wide) 6px var(--glow-pf),
+      /* ring-traced inset bloom — follows each color band */
+      inset 0 0 var(--glow-tight) var(--band) var(--glow-r),
+      inset 0 0 var(--glow-mid) calc(var(--band) + var(--sep) * 0.35) var(--glow-y),
+      inset 0 0 var(--glow-mid) calc(var(--band)*2 + var(--sep)) var(--glow-y),
+      inset 0 0 var(--glow-mid) calc(var(--band)*2 + var(--sep)*1.35) var(--glow-g),
+      inset 0 0 var(--glow-mid) calc(var(--band)*3 + var(--sep)*2) var(--glow-g),
+      inset 0 0 var(--glow-mid) calc(var(--band)*3 + var(--sep)*2.35) var(--glow-b),
+      inset 0 0 var(--glow-mid) calc(var(--band)*4 + var(--sep)*3) var(--glow-b),
+      inset 0 0 var(--glow-wide) calc(var(--band)*4 + var(--sep)*3.35) var(--glow-p),
+      inset 0 0 var(--glow-wide) calc(var(--band)*5 + var(--sep)*4) var(--glow-p);
   }
 
   .rainbow-frame::after {
