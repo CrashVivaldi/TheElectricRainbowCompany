@@ -196,6 +196,7 @@
     svg.setAttribute("id", "svgRainbowFrame");
     svg.setAttribute("viewBox", `0 0 ${SPACE} ${SPACE}`);
     svg.setAttribute("preserveAspectRatio", "none");
+    svg.setAttribute("overflow", "hidden");
 
     const ringsGroup = document.createElementNS(NS, "g");
     const glowGroup = document.createElementNS(NS, "g");
@@ -267,11 +268,26 @@
     return svg;
   }
 
+  function fitSvgToViewport(svg) {
+    const apply = () => {
+      // innerHeight/innerWidth track the visible viewport on iOS (100vh does not).
+      svg.style.width = window.innerWidth + "px";
+      svg.style.height = window.innerHeight + "px";
+    };
+    apply();
+    window.addEventListener("resize", apply);
+    window.addEventListener("orientationchange", apply);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", apply);
+    }
+  }
+
   function init() {
     const old = document.querySelector(".rainbow-frame");
     const svg = buildBorderSvg();
     if (old) old.replaceWith(svg);
     else document.body.appendChild(svg);
+    fitSvgToViewport(svg);
   }
 
   if (document.readyState === "loading") {

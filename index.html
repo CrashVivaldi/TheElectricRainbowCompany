@@ -141,15 +141,17 @@
 
   /* EXPERIMENTAL: SVG replacement, painted by js/svg-border.js. Same box
      and stacking position the old .rainbow-frame had; no clip-path notch
-     (see file header comment in svg-border.js for why). */
+     (see file header comment in svg-border.js for why). Width/height are
+     set from window.innerHeight in JS — not 100vh — so iOS landscape
+     doesn't paint the border below the visible viewport. */
   #svgRainbowFrame {
     position: fixed;
-    inset: 0;
-    width: 100vw;
-    height: 100vh;
+    top: 0;
+    left: 0;
     pointer-events: none;
     z-index: 5;
     display: block;
+    overflow: hidden;
   }
 
   /* ---------- Carry-preview overlay ----------
