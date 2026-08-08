@@ -330,36 +330,37 @@ function applyDomColliders() {
   clearDomColliders();
   const rect0 = canvases[0].getBoundingClientRect();
   const els = document.querySelectorAll(".solid-collider");
-  // All word ledges share one Y — the inner bottom edge of the rainbow
-  // frame — so sand piles on shelves flush with the border, not at the
-  // viewport edge or each span's own baseline.
   const frameBottomScreenY = window.innerHeight - rainbowFrameInsetPx();
-  for (const el of els) {
-    const r = el.getBoundingClientRect();
-    const wx0 = Math.floor(camera.x + (r.left - rect0.left) / rect0.width * VIEW_W * camera.scale);
-    const wx1 = Math.ceil(camera.x + (r.right - rect0.left) / rect0.width * VIEW_W * camera.scale);
-    const wyBottom = Math.ceil(camera.y + (frameBottomScreenY - rect0.top) / rect0.height * VIEW_H * camera.scale);
-    // ELECTRIC RAINBOW MAGIC FORK — was the element's FULL bounding-box
-    // height (top edge to bottom edge), filled with visible Stone. Now:
-    // a thin ledge, COLLIDER_LEDGE_THICKNESS cells tall, anchored at the
-    // BOTTOM edge only — a footing directly under the text's baseline,
-    // not a block spanning the whole letter height. Full width still
-    // (wx0/wx1 unchanged), colored with Voidstone (blends into the void,
-    // see materials.js) instead of Stone's visible color — reads as sand
-    // piling up on an invisible shelf right under each line, not a
-    // rectangle interrupting the gradient text sitting above it.
+
+  function screenYToWorldRow(screenY) {
+    return Math.ceil(camera.y + (screenY - rect0.top) / rect0.height * VIEW_H * camera.scale);
+  }
+
+  // Thin Voidstone strip at world row wyBottom (exclusive top, inclusive bottom).
+  function placeLedge(wx0, wx1, wyBottom) {
     const wy0 = wyBottom - COLLIDER_LEDGE_THICKNESS;
-    const wy1 = wyBottom;
-    for (let y = wy0; y < wy1; y++) {
+    for (let y = wy0; y < wyBottom; y++) {
       for (let x = wx0; x < wx1; x++) {
         if (x < 0 || x >= W || y < 0 || y >= H) continue;
         const i = idx(x, y);
-        if (grid[i] !== EMPTY) continue;   // never overwrite existing sand
+        if (grid[i] !== EMPTY) continue;
         grid[i] = VOIDSTONE;
         domColliderCells.add(i);
         wake(x, y);
       }
     }
+  }
+
+  for (const el of els) {
+    const r = el.getBoundingClientRect();
+    const wx0 = Math.floor(camera.x + (r.left - rect0.left) / rect0.width * VIEW_W * camera.scale);
+    const wx1 = Math.ceil(camera.x + (r.right - rect0.left) / rect0.width * VIEW_W * camera.scale);
+    // Word shelf — locked to each span's live layout box so it tracks
+    // reflow and mobile orientation the way the title itself does.
+    placeLedge(wx0, wx1, screenYToWorldRow(r.bottom));
+    // Bottom shelf — same horizontal span, flush with the rainbow frame's
+    // inner bottom edge (the play surface along the border).
+    placeLedge(wx0, wx1, screenYToWorldRow(frameBottomScreenY));
   }
 }
 
