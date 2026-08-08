@@ -95,9 +95,9 @@ camera.y = Math.floor(camera.y);
 // needed, confirmed by reading trySwap directly rather than assuming.
 // This is the drain mechanism for the live-sand cap below: holes bleed
 // off standing piles continuously instead of needing an active prune.
-// Edge holes are sized from the rainbow frame inset (see buildFloor);
-// center hole tracks the title width; both are rebuilt on resize.
-const FLOOR_EDGE_HOLE_SCALE = 0.88;   // slightly narrower than the border bands
+// Side drain holes align with the rainbow frame inset (see
+// rainbowFrameInnerXRange) — everything outside the inner border on the
+// floor row is void; sand falls through.
 const FLOOR_Y = H - 1;
 const floorCells = new Set();   // real indices actually placed as floor — NOT just "W of them", since holes mean it's fewer. Used below to keep the live-sand cap counting painted material only, not structural floor.
 
@@ -351,14 +351,11 @@ function applyDomColliders() {
   }
 
   // Continuous shelf along the inner bottom edge of the rainbow frame —
-  // sand piles here and reads as sitting on top of the border. Spans the
-  // visible floor between the side drain holes (same x-range as buildFloor
-  // stone), anchored to the frame inset, not the viewport edge.
+  // sand piles here and reads as sitting on top of the border. Ends where
+  // the inner left/right border rings begin; outside that is void.
   const frameBottomScreenY = window.innerHeight - rainbowFrameInsetPx();
-  const viewLeft = Math.floor(camera.x);
-  const viewRight = Math.ceil(camera.x + VIEW_W * camera.scale);
-  const edgeW = edgeHoleWorldWidth();
-  placeLedge(viewLeft + edgeW, viewRight - edgeW, screenYToWorldRow(frameBottomScreenY));
+  const inner = rainbowFrameInnerXRange();
+  placeLedge(inner.wx0, inner.wx1, screenYToWorldRow(frameBottomScreenY));
 }
 
 function screenXToWorldX(screenX) {
@@ -366,12 +363,14 @@ function screenXToWorldX(screenX) {
   return camera.x + (screenX - rect0.left) / rect0.width * VIEW_W * camera.scale;
 }
 
-function edgeHoleWorldWidth() {
-  const insetPx = rainbowFrameInsetPx();
-  const rect0 = canvases[0].getBoundingClientRect();
-  if (!rect0.width) return 4;
-  const insetWorld = (insetPx / rect0.width) * VIEW_W * camera.scale;
-  return Math.max(2, Math.floor(insetWorld * FLOOR_EDGE_HOLE_SCALE));
+// World-x span inside the rainbow frame's inner left/right edges (viewport
+// inset matches index.html --frame-inset). Rebuilt on resize/orientation.
+function rainbowFrameInnerXRange() {
+  const inset = rainbowFrameInsetPx();
+  return {
+    wx0: Math.floor(screenXToWorldX(inset)),
+    wx1: Math.ceil(screenXToWorldX(window.innerWidth - inset)),
+  };
 }
 
 function clearFloorRow() {
@@ -398,18 +397,11 @@ function mergeHoleRanges(ranges) {
 function buildFloor() {
   if (usingInitialGrid) return;
   clearFloorRow();
-  const edgeW = edgeHoleWorldWidth();
-  // Edge holes must line up with the SCREEN edges, not the world's true
-  // edges — the camera only ever shows a cropped middle slice of the
-  // wider world (camera.x .. camera.x+VIEW_W*camera.scale), so a hole
-  // placed at world x=0/W sits far outside anything visible. Floor rows
-  // outside the visible slice are unreachable anyway (painting/screen
-  // math only ever produces world coords inside it), so it's safe to
-  // only build floor within that range.
   const viewLeft = Math.floor(camera.x);
   const viewRight = Math.ceil(camera.x + VIEW_W * camera.scale);
-  const holes = [[viewLeft, viewLeft + edgeW], [viewRight - edgeW, viewRight]];
-
+  const inner = rainbowFrameInnerXRange();
+  // Left and right holes: viewport edge out to where the rainbow border starts.
+  const holes = [[viewLeft, inner.wx0], [inner.wx1, viewRight]];
   const merged = mergeHoleRanges(holes);
   const inHole = (x) => merged.some(([a, b]) => x >= a && x < b);
 
