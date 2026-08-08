@@ -26,6 +26,7 @@
     --sep:  0.43vmin;
     --radius: 8vmin;
     --frame-inset: calc(5 * var(--band) + 4 * var(--sep));
+    --floor-gap: 42vmin;
   }
 
   * { box-sizing: border-box; }
@@ -105,6 +106,42 @@
       inset 0 0 0 calc(var(--band)*4 + var(--sep)*3) var(--c-blue),
       inset 0 0 0 calc(var(--band)*4 + var(--sep)*4) black,
       inset 0 0 0 calc(var(--band)*5 + var(--sep)*4) var(--c-purple);
+  }
+
+  /* Bottom-center notch — void overlay eats the rainbow bands so the
+     border appears to curve down off-screen on both sides of the floor
+     drain. Width synced from sand-bg.js to match the center floor hole. */
+  .rainbow-floor-notch {
+    position: fixed;
+    bottom: calc(-1 * var(--frame-inset));
+    left: 50%;
+    transform: translateX(-50%);
+    width: var(--floor-gap);
+    height: calc(var(--frame-inset) * 2.8);
+    z-index: 6;
+    pointer-events: none;
+    background: var(--void);
+    border-radius: 50% 50% 0 0 / 72% 72% 0 0;
+  }
+  .rainbow-floor-notch::before,
+  .rainbow-floor-notch::after {
+    content: "";
+    position: absolute;
+    bottom: calc(var(--frame-inset) * 0.85);
+    width: calc(var(--frame-inset) * 1.6);
+    height: calc(var(--frame-inset) * 2.2);
+    background: var(--void);
+    pointer-events: none;
+  }
+  .rainbow-floor-notch::before {
+    right: 100%;
+    margin-right: -1px;
+    border-bottom-right-radius: 100% 80%;
+  }
+  .rainbow-floor-notch::after {
+    left: 100%;
+    margin-left: -1px;
+    border-bottom-left-radius: 100% 80%;
   }
 
   /* ---------- Carry-preview overlay ----------
@@ -265,6 +302,7 @@
   </div>
 
   <div class="rainbow-frame"></div>
+  <div class="rainbow-floor-notch" aria-hidden="true"></div>
 
   <canvas id="carryOverlay"></canvas>
   <canvas id="carryGlow"></canvas>

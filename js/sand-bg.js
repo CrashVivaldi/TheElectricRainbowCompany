@@ -95,8 +95,9 @@ camera.y = Math.floor(camera.y);
 // needed, confirmed by reading trySwap directly rather than assuming.
 // This is the drain mechanism for the live-sand cap below: holes bleed
 // off standing piles continuously instead of needing an active prune.
-const FLOOR_HOLE_WIDTH = 6;     // cells wide, per gap
-const FLOOR_HOLE_SPACING = 48;  // cells between gap starts (pitch)
+// Edge holes are sized from the rainbow frame inset (see buildFloor);
+// center hole tracks the title width; both are rebuilt on resize.
+const FLOOR_EDGE_HOLE_SCALE = 0.88;   // slightly narrower than the border bands
 const FLOOR_Y = H - 1;
 const floorCells = new Set();   // real indices actually placed as floor — NOT just "W of them", since holes mean it's fewer. Used below to keep the live-sand cap counting painted material only, not structural floor.
 
@@ -161,15 +162,8 @@ if (_initial && Array.isArray(_initial.runs) && _initial.length === W * H) {
   usingInitialGrid = true;
 }
 
-if (!usingInitialGrid) {
-  for (let x = 0; x < W; x++) {
-    if ((x % FLOOR_HOLE_SPACING) < FLOOR_HOLE_WIDTH) continue;   // hole — leave EMPTY
-    const i = idx(x, FLOOR_Y);
-    grid[i] = STONE;
-    floorCells.add(i);
-    wake(x, FLOOR_Y);
-  }
-}
+// Floor row is built later by buildFloor() — needs live canvas layout for
+// edge/center hole placement (see applySiteLayout after resizeBox).
 
 // ---- LIVE-SAND CAP. Holes in the floor (above) drain standing piles
 // continuously, but a visitor holding the pointer down and dragging
@@ -330,13 +324,11 @@ function applyDomColliders() {
   clearDomColliders();
   const rect0 = canvases[0].getBoundingClientRect();
   const els = document.querySelectorAll(".solid-collider");
-  const frameBottomScreenY = window.innerHeight - rainbowFrameInsetPx();
 
   function screenYToWorldRow(screenY) {
     return Math.ceil(camera.y + (screenY - rect0.top) / rect0.height * VIEW_H * camera.scale);
   }
 
-  // Thin Voidstone strip at world row wyBottom (exclusive top, inclusive bottom).
   function placeLedge(wx0, wx1, wyBottom) {
     const wy0 = wyBottom - COLLIDER_LEDGE_THICKNESS;
     for (let y = wy0; y < wyBottom; y++) {
@@ -355,13 +347,81 @@ function applyDomColliders() {
     const r = el.getBoundingClientRect();
     const wx0 = Math.floor(camera.x + (r.left - rect0.left) / rect0.width * VIEW_W * camera.scale);
     const wx1 = Math.ceil(camera.x + (r.right - rect0.left) / rect0.width * VIEW_W * camera.scale);
-    // Word shelf — locked to each span's live layout box so it tracks
-    // reflow and mobile orientation the way the title itself does.
+    // Word shelf only — locked to each span so it tracks reflow/rotation.
     placeLedge(wx0, wx1, screenYToWorldRow(r.bottom));
-    // Bottom shelf — same horizontal span, flush with the rainbow frame's
-    // inner bottom edge (the play surface along the border).
-    placeLedge(wx0, wx1, screenYToWorldRow(frameBottomScreenY));
   }
+}
+
+function screenXToWorldX(screenX) {
+  const rect0 = canvases[0].getBoundingClientRect();
+  return camera.x + (screenX - rect0.left) / rect0.width * VIEW_W * camera.scale;
+}
+
+function edgeHoleWorldWidth() {
+  const insetPx = rainbowFrameInsetPx();
+  const rect0 = canvases[0].getBoundingClientRect();
+  if (!rect0.width) return 4;
+  const insetWorld = (insetPx / rect0.width) * VIEW_W * camera.scale;
+  return Math.max(2, Math.floor(insetWorld * FLOOR_EDGE_HOLE_SCALE));
+}
+
+function clearFloorRow() {
+  for (const i of floorCells) {
+    if (grid[i] === STONE) {
+      grid[i] = EMPTY;
+      wake(i % W, FLOOR_Y);
+    }
+  }
+  floorCells.clear();
+}
+
+function mergeHoleRanges(ranges) {
+  const sorted = ranges.slice().sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  for (const [a, b] of sorted) {
+    if (merged.length && a <= merged[merged.length - 1][1]) {
+      merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], b);
+    } else merged.push([a, b]);
+  }
+  return merged;
+}
+
+function updateFloorGapCss(titleRect) {
+  const pad = rainbowFrameInsetPx() * 0.3;
+  document.documentElement.style.setProperty("--floor-gap", `${titleRect.width + pad * 2}px`);
+}
+
+function buildFloor() {
+  if (usingInitialGrid) return;
+  clearFloorRow();
+  const edgeW = edgeHoleWorldWidth();
+  const holes = [[0, edgeW], [W - edgeW, W]];
+
+  const title = document.querySelector(".stage h1");
+  if (title) {
+    const r = title.getBoundingClientRect();
+    holes.push([
+      Math.max(0, Math.floor(screenXToWorldX(r.left)) - 1),
+      Math.min(W, Math.ceil(screenXToWorldX(r.right)) + 1),
+    ]);
+    updateFloorGapCss(r);
+  }
+
+  const merged = mergeHoleRanges(holes);
+  const inHole = (x) => merged.some(([a, b]) => x >= a && x < b);
+
+  for (let x = 0; x < W; x++) {
+    if (inHole(x)) continue;
+    const i = idx(x, FLOOR_Y);
+    grid[i] = STONE;
+    floorCells.add(i);
+    wake(x, FLOOR_Y);
+  }
+}
+
+function applySiteLayout() {
+  buildFloor();
+  applyDomColliders();
 }
 
 // Brush radius scales with zoom — at 1 world-cell fixed radius, a dab
@@ -452,7 +512,7 @@ function resizeBox() {
   }
 }
 resizeBox();
-applyDomColliders();
+applySiteLayout();
 // ELECTRIC RAINBOW MAGIC FORK — applyDomColliders() reads LIVE rendered
 // getBoundingClientRect() off each .solid-collider span, no font-specific
 // math anywhere in it — genuinely font-agnostic by construction. But
@@ -472,7 +532,7 @@ applyDomColliders();
 // there catches the real, final layout. Keeping the immediate call
 // above too: cheap, harmless, and gives SOME colliders right away
 // rather than a naked gap before fonts.ready resolves.
-document.fonts.ready.then(applyDomColliders);
+document.fonts.ready.then(applySiteLayout);
 
 // ---- carry-preview overlay sizing. Plain screen-space canvas — full
 // viewport resolution, 1:1 with CSS pixels (no devicePixelRatio
@@ -580,7 +640,7 @@ window.addEventListener("resize", () => {
   // Debounced — a resize drag fires many events in a row, and re-scanning
   // every tagged element's real layout position on every single one of
   // them is wasted work mid-drag. Re-applies once things settle.
-  resizeDebounce = setTimeout(applyDomColliders, 150);
+  resizeDebounce = setTimeout(applySiteLayout, 150);
 });
 
 // Orientation changes on mobile fire a resize event, but the browser
@@ -600,7 +660,7 @@ window.addEventListener("orientationchange", () => {
     resizeCarryOverlay();
     resizeCarryGlow();
     repositionAllLinkRegions();
-    applyDomColliders();
+    applySiteLayout();
   }, 350);
 });
 
@@ -1103,7 +1163,7 @@ function addCheckbox(label, checked, onChange) {
 grainSlider = addSlider("Grain size (CELL_PX)", 2, 12, 1, CELL_PX, (v) => {
   CELL_PX = v;
   resizeBox();
-  applyDomColliders();
+  applySiteLayout();
 });
 // Only a genuine user drag should count as an override — dispatching a
 // synthetic "input" event (maybeApplyResponsiveGrain) doesn't fire
@@ -1283,7 +1343,7 @@ function importJSONFile(file) {
     reconstructTrackingSetsFromGrid();
     chunkAwake.fill(1);   // cheap (66 chunks, not 270k cells) — forces physics/render to actually look at everything just-loaded
     forceRenderNextFrame = true;
-    applyDomColliders();
+    applySiteLayout();
   };
   reader.readAsText(file);
 }
