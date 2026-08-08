@@ -24,8 +24,9 @@
     --c-purple: #9B4FE0;
     --band: 0.4vmin;
     --sep:  1.18vmin;
+    --outer-border: 2px;
     --radius: 8vmin;
-    --frame-inset: calc(5 * var(--band) + 4 * var(--sep));
+    --frame-inset: calc(var(--outer-border) + 5 * var(--band) + 4 * var(--sep));
   }
 
   * { box-sizing: border-box; }
@@ -96,15 +97,16 @@
     z-index: 5;
     border-radius: var(--radius);
     box-shadow:
-      inset 0 0 0 var(--band) var(--c-red),
-      inset 0 0 0 calc(var(--band) + var(--sep)) black,
-      inset 0 0 0 calc(var(--band)*2 + var(--sep)) var(--c-yellow),
-      inset 0 0 0 calc(var(--band)*2 + var(--sep)*2) black,
-      inset 0 0 0 calc(var(--band)*3 + var(--sep)*2) var(--c-green),
-      inset 0 0 0 calc(var(--band)*3 + var(--sep)*3) black,
-      inset 0 0 0 calc(var(--band)*4 + var(--sep)*3) var(--c-blue),
-      inset 0 0 0 calc(var(--band)*4 + var(--sep)*4) black,
-      inset 0 0 0 calc(var(--band)*5 + var(--sep)*4) var(--c-purple);
+      inset 0 0 0 var(--outer-border) black,
+      inset 0 0 0 calc(var(--outer-border) + var(--band)) var(--c-red),
+      inset 0 0 0 calc(var(--outer-border) + var(--band) + var(--sep)) black,
+      inset 0 0 0 calc(var(--outer-border) + var(--band)*2 + var(--sep)) var(--c-yellow),
+      inset 0 0 0 calc(var(--outer-border) + var(--band)*2 + var(--sep)*2) black,
+      inset 0 0 0 calc(var(--outer-border) + var(--band)*3 + var(--sep)*2) var(--c-green),
+      inset 0 0 0 calc(var(--outer-border) + var(--band)*3 + var(--sep)*3) black,
+      inset 0 0 0 calc(var(--outer-border) + var(--band)*4 + var(--sep)*3) var(--c-blue),
+      inset 0 0 0 calc(var(--outer-border) + var(--band)*4 + var(--sep)*4) black,
+      inset 0 0 0 calc(var(--outer-border) + var(--band)*5 + var(--sep)*4) var(--c-purple);
   }
 
   /* ---------- Carry-preview overlay ----------

@@ -317,7 +317,8 @@ function rainbowFrameInsetPx() {
   };
   const band = parseLen(root.getPropertyValue("--band"), "1vmin");
   const sep = parseLen(root.getPropertyValue("--sep"), "0.43vmin");
-  return 5 * band + 4 * sep;
+  const outer = parseLen(root.getPropertyValue("--outer-border"), "2px");
+  return outer + 5 * band + 4 * sep;
 }
 
 function applyDomColliders() {
