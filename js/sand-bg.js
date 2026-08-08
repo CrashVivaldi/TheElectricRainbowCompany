@@ -180,7 +180,7 @@ if (_initial && Array.isArray(_initial.runs) && _initial.length === W * H) {
 // performance safety valve (the chunk-sleep system already handles that).
 // One constant, easy to move if it reads wrong once it's live in front
 // of you — say the word and I'll wire it into the tuning panel instead.
-const MAX_LIVE_SAND = 5200;
+const MAX_LIVE_SAND = 4000;
 // ELECTRIC RAINBOW MAGIC FORK — was recomputed via a full W*H grid scan
 // (~270k cells) every render-eligible frame. Now maintained incrementally:
 // +1 in placeMaterial below when a NEW cell is painted (overwriting an
