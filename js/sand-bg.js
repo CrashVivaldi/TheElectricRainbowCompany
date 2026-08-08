@@ -36,13 +36,11 @@ setTemperatureEnabled(false);
 // nothing special needed to keep it), reactions are just off the table
 // for this pass by not including any reactive materials, not by
 // disabling anything.
+const SPECTRUM_COLORS = ["Red", "Yellow", "Green", "Blue", "Purple"];
 const PALETTE_NAMES = [
-  "Red Sand", "Red Water", "Red Gas",
-  "Orange Sand", "Orange Water", "Orange Gas",
-  "Yellow Sand", "Yellow Water", "Yellow Gas",
-  "Green Sand", "Green Water", "Green Gas",
-  "Blue Sand", "Blue Water", "Blue Gas",
-  "Purple Sand", "Purple Water", "Purple Gas",
+  ...SPECTRUM_COLORS.map(c => `${c} Sand`),
+  ...SPECTRUM_COLORS.map(c => `${c} Water`),
+  ...SPECTRUM_COLORS.map(c => `${c} Gas`),
 ];
 const PALETTE = PALETTE_NAMES.map(name => {
   const id = MATS.findIndex(m => m.name === name);
@@ -313,15 +311,34 @@ function clearDomColliders() {
 // world-space) — stays a small, thin strip regardless of grain size.
 const COLLIDER_LEDGE_THICKNESS = 1;
 
+// Inner edge of the rainbow border frame (matches index.html --frame-inset).
+function rainbowFrameInsetPx() {
+  const root = getComputedStyle(document.documentElement);
+  const vmin = Math.min(window.innerWidth, window.innerHeight) / 100;
+  const parseLen = (raw, fallback) => {
+    const val = (raw || fallback).trim();
+    if (val.endsWith("vmin")) return parseFloat(val) * vmin;
+    if (val.endsWith("px")) return parseFloat(val);
+    return parseFloat(val) * vmin;
+  };
+  const band = parseLen(root.getPropertyValue("--band"), "1vmin");
+  const sep = parseLen(root.getPropertyValue("--sep"), "0.43vmin");
+  return 5 * band + 4 * sep;
+}
+
 function applyDomColliders() {
   clearDomColliders();
   const rect0 = canvases[0].getBoundingClientRect();
   const els = document.querySelectorAll(".solid-collider");
+  // All word ledges share one Y — the inner bottom edge of the rainbow
+  // frame — so sand piles on shelves flush with the border, not at the
+  // viewport edge or each span's own baseline.
+  const frameBottomScreenY = window.innerHeight - rainbowFrameInsetPx();
   for (const el of els) {
     const r = el.getBoundingClientRect();
     const wx0 = Math.floor(camera.x + (r.left - rect0.left) / rect0.width * VIEW_W * camera.scale);
     const wx1 = Math.ceil(camera.x + (r.right - rect0.left) / rect0.width * VIEW_W * camera.scale);
-    const wyBottom = Math.ceil(camera.y + (r.bottom - rect0.top) / rect0.height * VIEW_H * camera.scale);
+    const wyBottom = Math.ceil(camera.y + (frameBottomScreenY - rect0.top) / rect0.height * VIEW_H * camera.scale);
     // ELECTRIC RAINBOW MAGIC FORK — was the element's FULL bounding-box
     // height (top edge to bottom edge), filled with visible Stone. Now:
     // a thin ledge, COLLIDER_LEDGE_THICKNESS cells tall, anchored at the
@@ -935,58 +952,25 @@ function loop(now) {
     forceRenderNextFrame = false;
   }
   wasAwakeLastCheck = awakeNow;
-  updateDiag(dt, shouldRender);
   requestAnimationFrame(loop);
 }
 
-// ---- temporary on-screen diagnostics — same idea as sandbox.html's own
-// #diag strip, so this can be read directly off a phone/tablet screen
-// without needing devtools. Remove once the lag question's settled.
-const diag = document.createElement("div");
-diag.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:9;padding:6px 10px;" +
-  "font:11px monospace;color:#fff;background:rgba(0,0,0,0.6);pointer-events:none;white-space:pre-line;";
-document.body.appendChild(diag);
-let fpsAcc = 0, fpsN = 0, fpsDisplay = 0;
-function updateDiag(dt, rendered) {
-  fpsAcc += dt; fpsN++;
-  if (fpsAcc > 500) { fpsDisplay = Math.round(1000 / (fpsAcc / fpsN)); fpsAcc = 0; fpsN = 0; }
-  let awake = 0;
-  for (let i = 0; i < chunkAwake.length; i++) if (chunkAwake[i]) awake++;
-  // ELECTRIC RAINBOW MAGIC FORK — "filled" used to come from recomputeCounts'
-  // full-grid scan; now it's just the three counters we already maintain
-  // incrementally, added together — O(1), and by construction can never
-  // disagree with paintedCellCount since paintedCellCount IS one of the
-  // three terms, not a derived-then-diffed value anymore.
-  const filled = paintedCellCount + floorCells.size + domColliderCells.size;
-  const rect = canvases[0].getBoundingClientRect();
-  diag.textContent =
-    `fps: ${fpsDisplay}   render: ${rendered ? "live" : "SKIPPED (idle)"}\n` +
-    `camera.scale: ${camera.scale}  x:${camera.x} y:${camera.y}\n` +
-    `CELL_PX: ${CELL_PX}   canvas: ${Math.round(rect.width)}x${Math.round(rect.height)}px   window: ${window.innerWidth}x${window.innerHeight}\n` +
-    `awake chunks: ${awake}/66   filled cells: ${filled}   painted (capped): ${paintedCellCount}/${MAX_LIVE_SAND}   dom-collider cells: ${domColliderCells.size}\n` +
-    `dirty rects: ${flatDirtyRectsEnabled ? "ON" : "off"}`;
-}
-
 render();
-updateDiag(TICK_MS, true);
 if (!reducedMotion) requestAnimationFrame(loop);
 
-// ---- palette UI: real DOM elements, not canvas-drawn — sits above
-// everything, own click handling, never touches the sim's pixels.
-// Deliberately NOT tagged .solid-collider — sand piling up and
-// physically blocking the palette buttons would break the UI, not
-// just look bad.
-const paletteBar = document.createElement("div");
-paletteBar.style.cssText =
-  "position:fixed;top:78px;left:0;right:0;z-index:10;" +
-  "display:flex;gap:8px;padding:8px 12px;justify-content:center;flex-wrap:wrap;pointer-events:none;";
-const swatchEls = [];
-for (const mat of PALETTE) {
+// ---- palette UI: three groups (sands top-left, liquids top-right,
+// gases bottom-center), inset inside the rainbow frame via index.html CSS.
+function createPaletteGroup(className) {
+  const group = document.createElement("div");
+  group.className = `palette-group ${className}`;
+  document.body.appendChild(group);
+  return group;
+}
+function addSwatch(group, mat, swatchEls) {
   const sw = document.createElement("div");
+  sw.className = "palette-swatch";
   sw.title = mat.name;
-  sw.style.cssText =
-    `width:30px;height:30px;border-radius:7px;background:${mat.color};cursor:pointer;` +
-    "box-shadow:0 0 0 2px rgba(255,255,255,0.18);pointer-events:auto;transition:box-shadow .12s;";
+  sw.style.background = mat.color;
   sw.addEventListener("pointerdown", (e) => {
     e.stopPropagation();
     selectedMat = mat.id;
@@ -994,10 +978,20 @@ for (const mat of PALETTE) {
     sw.style.boxShadow = "0 0 0 3px #fff, 0 0 12px 2px #fff";
   });
   swatchEls.push(sw);
-  paletteBar.appendChild(sw);
+  group.appendChild(sw);
+  return sw;
 }
-swatchEls[0].style.boxShadow = "0 0 0 3px #fff, 0 0 12px 2px #fff";   // Sand starts selected
-document.body.appendChild(paletteBar);
+const paletteGroups = {
+  sands: createPaletteGroup("palette-sands"),
+  liquids: createPaletteGroup("palette-liquids"),
+  gases: createPaletteGroup("palette-gases"),
+};
+const swatchEls = [];
+const paletteByName = Object.fromEntries(PALETTE.map(m => [m.name, m]));
+for (const color of SPECTRUM_COLORS) addSwatch(paletteGroups.sands, paletteByName[`${color} Sand`], swatchEls);
+for (const color of SPECTRUM_COLORS) addSwatch(paletteGroups.liquids, paletteByName[`${color} Water`], swatchEls);
+for (const color of SPECTRUM_COLORS) addSwatch(paletteGroups.gases, paletteByName[`${color} Gas`], swatchEls);
+swatchEls[0].style.boxShadow = "0 0 0 3px #fff, 0 0 12px 2px #fff";   // Red Sand starts selected
 
 // ---- TUNING PANEL — hand-tuning UI for grain size + the glow layer's
 // CSS filter + the non-emissive glow strength (materials.js's `emAmt`,
@@ -1150,6 +1144,7 @@ addCheckbox("Dirty rects (perf, verified on-device)", true, (checked) => {
 });
 
 document.body.appendChild(panel);
+panel.style.display = "none";   // site tuning scaffolding — hidden on the public page
 
 // ==================== STUDIO EDITOR ====================
 // Everything from here down is authoring tooling for Crash, not
@@ -1547,10 +1542,12 @@ matLabToggleBtn.addEventListener("click", () => setMatLabOpen(!matLabOpen));
 // synchronous, with no listener/ack plumbing to keep in sync.
 function applyUIVisibility() {
   const hide = uiHidden;
+  const showPalette = overlaysVisible && !hide;
   editorToolbar.style.display = (editMode && !hide) ? "flex" : "none";
-  paletteBar.style.display = (overlaysVisible && !hide) ? "flex" : "none";
-  panel.style.display = (overlaysVisible && !hide) ? "block" : "none";
-  diag.style.display = hide ? "none" : "block";
+  for (const group of Object.values(paletteGroups)) {
+    group.style.display = showPalette ? "flex" : "none";
+  }
+  panel.style.display = (editMode && overlaysVisible && !hide) ? "block" : "none";
   // The material lab is edit-mode-only chrome, same as the rest of
   // editorToolbar — but it's a separate slide-in element (left edge, not
   // inside editorToolbar itself), so it needs its own visibility pass.
