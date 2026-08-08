@@ -300,6 +300,24 @@ function clearDomColliders() {
   domColliderCells.clear();
 }
 
+// Rows at/just above the floor row — no invisible Voidstone shelves here.
+// Word play shelves live under the title (mid-screen); bottom drain holes
+// are EMPTY floor cells only. This band catches any stale bottom ledges
+// from earlier builds or missed tracking on resize.
+const FLOOR_LEDGE_ZONE_TOP = FLOOR_Y - 10;
+
+function purgeVoidstoneInFloorZone() {
+  for (let y = FLOOR_LEDGE_ZONE_TOP; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = idx(x, y);
+      if (grid[i] !== VOIDSTONE) continue;
+      grid[i] = EMPTY;
+      domColliderCells.delete(i);
+      wake(x, y);
+    }
+  }
+}
+
 // How thick (world cells) the invisible footing under each text collider
 // is. Independent of CELL_PX (that's screen pixels per cell, this is
 // world-space) — stays a small, thin strip regardless of grain size.
@@ -322,6 +340,7 @@ function rainbowFrameInsetPx() {
 
 function applyDomColliders() {
   clearDomColliders();
+  purgeVoidstoneInFloorZone();
   const rect0 = canvases[0].getBoundingClientRect();
   const els = document.querySelectorAll(".solid-collider");
 
@@ -331,6 +350,8 @@ function applyDomColliders() {
 
   function placeLedge(wx0, wx1, wyBottom) {
     const wy0 = wyBottom - COLLIDER_LEDGE_THICKNESS;
+    // Word shelves only — never recreate the old bottom-border footing.
+    if (wy0 >= FLOOR_LEDGE_ZONE_TOP) return;
     for (let y = wy0; y < wyBottom; y++) {
       for (let x = wx0; x < wx1; x++) {
         if (x < 0 || x >= W || y < 0 || y >= H) continue;
@@ -347,7 +368,6 @@ function applyDomColliders() {
     const r = el.getBoundingClientRect();
     const wx0 = Math.floor(camera.x + (r.left - rect0.left) / rect0.width * VIEW_W * camera.scale);
     const wx1 = Math.ceil(camera.x + (r.right - rect0.left) / rect0.width * VIEW_W * camera.scale);
-    // Word shelf only — locked to each span so it tracks reflow/rotation.
     placeLedge(wx0, wx1, screenYToWorldRow(r.bottom));
   }
 }
@@ -1343,7 +1363,7 @@ function importJSONFile(file) {
     reconstructTrackingSetsFromGrid();
     chunkAwake.fill(1);   // cheap (66 chunks, not 270k cells) — forces physics/render to actually look at everything just-loaded
     forceRenderNextFrame = true;
-    applySiteLayout();
+    applyDomColliders();
   };
   reader.readAsText(file);
 }
