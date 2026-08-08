@@ -350,11 +350,12 @@ function applyDomColliders() {
     return Math.ceil(camera.x + (screenX - rect0.left) / rect0.width * VIEW_W * camera.scale);
   }
 
-  // Ledge sits 40% closer to the letters than the span's bottom edge —
-  // pulls the footing up into the word instead of hanging below the box.
+  // Ledge raised 20% toward the letters (was 40%, lowered by half).
   function ledgeScreenYForRect(r) {
-    return r.bottom - (r.bottom - r.top) * 0.4;
+    return r.bottom - (r.bottom - r.top) * 0.2;
   }
+
+  const LETTER_LEDGE_WIDTH_INSET = 0.12;   // narrow each letter shelf slightly
 
   // One footing segment per letter (gaps between letters are holes).
   function forEachLetterRect(el, cb) {
@@ -375,9 +376,10 @@ function applyDomColliders() {
 
   for (const el of els) {
     forEachLetterRect(el, (r) => {
+      const shrink = r.width * LETTER_LEDGE_WIDTH_INSET;
       placeLedge(
-        screenXToWorldXLocal(r.left),
-        screenXToWorldXLocalEnd(r.right),
+        screenXToWorldXLocal(r.left + shrink),
+        screenXToWorldXLocalEnd(r.right - shrink),
         screenYToWorldRow(ledgeScreenYForRect(r)),
       );
     });

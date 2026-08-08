@@ -166,6 +166,9 @@
   h1 {
     margin: 0;
     max-width: 90vw;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
     font-family: 'Monoton', cursive;
     font-weight: 500;
     font-size: clamp(1.5rem, 6.4vw, 3.6rem);
@@ -261,7 +264,12 @@
   </div>
 
   <div class="stage">
-    <h1><span class="solid-collider">The</span> <span class="solid-collider">Electric</span> <span class="solid-collider">Rainbow</span> <span class="solid-collider">Company</span></h1>
+    <h1>
+      <span class="solid-collider">The</span>
+      <span class="title-subline">
+        <span class="solid-collider">Electric</span> <span class="solid-collider">Rainbow</span> <span class="solid-collider">Company</span>
+      </span>
+    </h1>
   </div>
 
   <div class="rainbow-frame"></div>
