@@ -24,7 +24,7 @@ import { MATS, MATBY, EMPTY, SOLID_TWIN, STAMP_TWIN,
          CORE_MATERIAL_NAMES, MAX_CUSTOM_MATERIALS, CUSTOM_TABLE_STORAGE_KEY } from "./materials.js";
 import { mountMatLab, setMaterial as setMatLabMaterial } from "./ui-matlab.js";
 import { step, wake, clearSettling } from "./physics.js";
-import { render, setFlatDirtyRectsEnabled, flatDirtyRectsEnabled } from "./render.js";
+import { render, setFlatDirtyRectsEnabled, flatDirtyRectsEnabled, setVoidHoleInsetCells } from "./render.js";
 
 setTemperatureEnabled(false);
 
@@ -426,6 +426,29 @@ function applySiteLayout() {
   buildFloor();
   applyDomColliders();
   positionDrainButton();
+  updateVoidHoleInset();
+}
+
+// ---- transparent hole for the CSS rainbow-frame rings (js/render.js) ----
+// js/frame.js builds the ring stack and exposes its real total depth as
+// window.RainbowFrame.totalWidthVmin — read that directly rather than
+// re-deriving it from --band/--sep/PASSES/PASS_SCALE here, since this
+// file has no reason to know frame.js's own tuning constants and
+// shouldn't have to stay in sync with them by hand.
+//   +1 cell of pad beyond the exact computed depth: cheap insurance
+// against a 1px opaque seam from truncation/rounding at the canvas-to-
+// CSS boundary — a hole one cell too deep is invisible (still inside
+// the ring band's own color), a hole one cell too shallow is a visible
+// hairline of void along the innermost ring.
+function updateVoidHoleInset() {
+  const RF = window.RainbowFrame;
+  if (!RF || !rect0Width()) { setVoidHoleInsetCells(0); return; }
+  const vmin = Math.min(window.innerWidth, window.innerHeight) / 100;
+  const depthPx = RF.totalWidthVmin * vmin;
+  setVoidHoleInsetCells(Math.ceil(depthPx / CELL_PX) + 1);
+}
+function rect0Width() {
+  return canvases[0] && canvases[0].getBoundingClientRect().width;
 }
 
 // ---- DRAIN-AND-RESPAWN BUTTON ----

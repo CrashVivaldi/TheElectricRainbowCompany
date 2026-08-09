@@ -642,6 +642,32 @@ export function resetFlatSubchunkCache(){
 // shimmer, M.rainbow, or a temperature-driven heat-glow — which the
 // dirty-rects path needs to know to keep a subchunk repainting even once
 // nothing in it is physically moving.
+// ---- transparent hole for the CSS rainbow-frame rings (js/frame.js) ----
+// The border used to be pure decoration painted ON TOP of the sim, so this
+// never mattered. Once the sim was moved to render IN FRONT of the frame
+// (so sand can visibly fall over it — index.html's z-index reorder), the
+// #base canvas's own opaque void fill started covering the rings
+// completely: EVERY empty cell across the whole viewport painted solid
+// (13,10,20,255), including the border band, so the frame sat one paint
+// layer below something that occupied literally the entire screen.
+//   voidHoleInsetCells is in VIEW-cell units (same space vx/vy already
+// are), not world cells and not px — sand-bg.js computes it from the
+// ring stack's real depth (js/frame.js exposes that as
+// window.RainbowFrame.totalWidthVmin) converted through the current
+// CELL_PX, and calls setVoidHoleInsetCells() from applySiteLayout()
+// alongside the floor/collider rebuild, so it stays correct through
+// resize, orientation change, and a manual grain-size change — the same
+// three triggers everything else in that function already depends on.
+let voidHoleInsetCells = 0;
+export function setVoidHoleInsetCells(v){ voidHoleInsetCells = Math.max(0, v|0); }
+
+function inVoidHoleBand(vx, vy){
+  return voidHoleInsetCells > 0 && (
+    vx < voidHoleInsetCells || vx >= VIEW_W - voidHoleInsetCells ||
+    vy < voidHoleInsetCells || vy >= VIEW_H - voidHoleInsetCells
+  );
+}
+
 function paintCell(vx, vy, wx, wy){
   const m=grid[idx(wx,wy)];
   if(m===EMPTY){
@@ -650,7 +676,13 @@ function paintCell(vx, vy, wx, wy){
     // state.js). Leave base transparent there (alpha 0) instead of the
     // usual opaque void fill, so the skeleton canvas — painted once,
     // sitting behind base in the DOM, never redrawn — shows through.
-    if(skeletonMask[idx(wx,wy)]){
+    //   Same trick, same reasoning, for the ring band: an empty cell out
+    // there should show the CSS frame sitting behind this canvas instead
+    // of painting over it. A cell that ISN'T empty (sand that fell into
+    // the band, the floor's own Voidstone strip at the very bottom edge)
+    // still paints its real material normally, below — this only touches
+    // the fallback fill for genuinely empty space.
+    if(skeletonMask[idx(wx,wy)] || inVoidHoleBand(vx,vy)){
       fillBlock(bd, vx, vy, 0,0,0, 0);
     } else {
       fillBlock(bd, vx, vy, 13,10,20, 255);
