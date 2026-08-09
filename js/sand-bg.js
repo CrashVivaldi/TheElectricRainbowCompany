@@ -16,15 +16,25 @@
 // nothing's needed editing there yet.
 //   One courtesy still kept, not an obligation: flagging when a site fix
 // is general enough to be worth porting BACK to the game.
+//
+//   SPLIT (2026-08-09): this file used to also contain the full Studio
+// Editor — rect fill/erase tool, material lab, JSON/HTML export/import,
+// window.SandEditor — all authoring-only tooling that had no business
+// executing on a visitor's page. It's been pulled out into
+// js/sand-editor.js. That extraction is NOT yet wired to run standalone —
+// it references this file's former module-private state (selectedMat,
+// CELL_PX, floorCells, domColliderCells, glowState, etc.) that no longer
+// exists in its scope now that it's a separate module. Needs a real
+// integration pass before it runs again. This file is now pure visitor
+// runtime: no editMode, no authoring surface, nothing reachable from the
+// console that shouldn't be.
 
 import { W, H, VIEW_W, VIEW_H, camera, clampCamera, grid, idx, temp,
-         setTemperatureEnabled, SPAWN_TEMP_DEFAULT, chunkAwake, setGrid,
-         setNonEmissiveGlowMult, setOnWorldExit, setOnDecayToEmpty } from "./state.js";
-import { MATS, MATBY, EMPTY, SOLID_TWIN, STAMP_TWIN,
-         CORE_MATERIAL_NAMES, MAX_CUSTOM_MATERIALS, CUSTOM_TABLE_STORAGE_KEY } from "./materials.js";
-import { mountMatLab, setMaterial as setMatLabMaterial } from "./ui-matlab.js";
+         setTemperatureEnabled, SPAWN_TEMP_DEFAULT, chunkAwake,
+         setOnWorldExit, setOnDecayToEmpty } from "./state.js";
+import { MATS, MATBY, EMPTY } from "./materials.js";
 import { step, wake, clearSettling } from "./physics.js";
-import { render, setFlatDirtyRectsEnabled, flatDirtyRectsEnabled, setVoidHoleInsetCells } from "./render.js";
+import { render, setVoidHoleInsetCells } from "./render.js";
 
 setTemperatureEnabled(false);
 
@@ -98,66 +108,12 @@ camera.y = Math.floor(camera.y);
 const FLOOR_Y = H - 1;
 const floorCells = new Set();   // real indices actually placed as floor — NOT just "W of them", since holes mean it's fewer. Used below to keep the live-sand cap counting painted material only, not structural floor.
 
-// ---- STUDIO EDITOR — structural, editor-placed cells (rectangle
-// fill/erase tool). Tracked the same way floorCells/domColliderCells
-// are: a Set of grid indices so carry-pickup can exempt them (this is
-// authored site structure, not visitor-painted sand a guest should be
-// able to scoop up) and so they're never counted against
-// MAX_LIVE_SAND/paintedCellCount, which exists to bound ephemeral
-// visitor painting, not permanent authored content.
-//   CAVEAT, flagged not solved: the 18 rainbow materials have real decay
-// rates (materials.js, added for visitor-painted cells fading over
-// time). Anything the editor fills with one of THOSE materials will
-// still decay away on its own — there's no separate "permanent"
-// material set yet. Fine for quick mockups, not fine for a client's
-// actual structural art. Worth a real conversation before this ships on
-// a client site; flagging here rather than silently working around it.
-const editorCells = new Set();
-
-// ---- STUDIO EDITOR — RLE grid encode/decode. The exported JSON format's
-// core payload. Plain run-length-encoding, not a general compressor —
-// this grid is overwhelmingly EMPTY/Stone in long horizontal runs, so
-// RLE alone gets a huge size win with a trivial, dependency-free
-// implementation and a genuinely git-diffable flat array of numbers
-// (unlike a base64 blob, which diffs as one opaque line no matter how
-// small the actual change was).
-function encodeGridRLE(g) {
-  const runs = [];
-  let i = 0;
-  while (i < g.length) {
-    const v = g[i];
-    let j = i + 1;
-    while (j < g.length && g[j] === v) j++;
-    runs.push(v, j - i);
-    i = j;
-  }
-  return runs;
-}
-function decodeGridRLE(runs, length) {
-  const g = new Uint8Array(length);
-  let p = 0, i = 0;
-  while (p < runs.length) {
-    const v = runs[p++], c = runs[p++];
-    g.fill(v, i, i + c);
-    i += c;
-  }
-  return g;
-}
-
-// ---- STUDIO EDITOR — initial-state loading. An HTML export
-// (SandEditor.exportHTML, near the bottom of this file) bakes the grid
-// at export time into `window.__INITIAL_GRID__` as a plain inline
-// <script> before this module tag. If present, it's authoritative: skip
-// the default floor-build below entirely and reconstruct floorCells/
-// domColliderCells/editorCells + paintedCellCount from what's actually
-// in the loaded grid, one-time cost (a single W*H scan at startup, not
-// a per-frame one) rather than assume anything about how it got there.
-const _initial = window.__INITIAL_GRID__;
-let usingInitialGrid = false;
-if (_initial && Array.isArray(_initial.runs) && _initial.length === W * H) {
-  setGrid(decodeGridRLE(_initial.runs, _initial.length));
-  usingInitialGrid = true;
-}
+// NOTE: this site currently has no way to load an authored/baked scene
+// (no __INITIAL_GRID__, no RLE decode, no editorCells structural
+// tracking) — that whole consumer path moved to js/sand-editor.js along
+// with the tooling that produces it. If "author in the studio, ship a
+// scene to this site" becomes a real workflow, that loader needs to be
+// rebuilt here deliberately, not silently restored by copy-paste.
 
 // Floor row is built later by buildFloor() — needs live canvas layout for
 // edge/center hole placement (see applySiteLayout after resizeBox).
@@ -252,41 +208,6 @@ function placeMaterial(wx, wy) {
 // a THIN LEDGE at the bottom edge of each element's bounding box, not
 // the full height — see applyDomColliders below for the actual reasoning.
 const domColliderCells = new Set();
-
-// ---- STUDIO EDITOR — (re)classifies every non-empty grid cell by
-// material/position: VOIDSTONE on the floor row -> floorCells, VOIDSTONE
-// elsewhere -> domColliderCells (applyDomColliders() below only fills
-// EMPTY cells, so without this a reloaded page's old ledges would never
-// get cleaned up on resize), everything else -> assumed editor-placed
-// structure (editorCells), immune to visitor carry and exempt from
-// MAX_LIVE_SAND. Used both for the one-time startup load of an exported
-// initial grid, and again on a live JSON import from the editor toolbar.
-//   Real visitor-painted sand from BEFORE an export would also fall
-// into the editorCells bucket and get treated as structural — an
-// accepted imprecision: the export format doesn't currently distinguish
-// "a visitor painted this" from "the editor placed this," and
-// re-classifying it as structural on reload is the safer failure mode
-// (permanent) over the alternative (visitor sand quietly decaying/
-// capped when it wasn't before).
-function reconstructTrackingSetsFromGrid() {
-  floorCells.clear(); domColliderCells.clear(); editorCells.clear();
-  paintedCellCount = 0;
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const i = idx(x, y);
-      const v = grid[i];
-      if (v === EMPTY) continue;
-      // Floor is VOIDSTONE now (see buildFloor), same material the letter
-      // ledges use — this check has to run BEFORE the generic VOIDSTONE
-      // bucket below, or every floor cell in an imported/exported grid
-      // gets misclassified as a stale word-ledge on next load.
-      if (y === FLOOR_Y && v === VOIDSTONE) { floorCells.add(i); continue; }
-      if (v === VOIDSTONE) { domColliderCells.add(i); continue; }
-      editorCells.add(i);
-    }
-  }
-}
-if (usingInitialGrid) reconstructTrackingSetsFromGrid();
 
 function clearDomColliders() {
   for (const i of domColliderCells) {
@@ -456,7 +377,6 @@ function clearFloorRow() {
 const FLOOR_RAISE_PX = 32;
 
 function buildFloor() {
-  if (usingInitialGrid) return;
   clearFloorRow();
   // Screen-edge bounds, not the world's true edges — the camera only
   // ever shows a cropped middle slice of the wider world (camera.x ..
@@ -573,7 +493,6 @@ function triggerSandReset() {
     grid.fill(EMPTY);
     floorCells.clear();
     domColliderCells.clear();
-    editorCells.clear();
     paintedCellCount = 0;
     MATS[VOIDSTONE].decay = 0; // restore BEFORE rebuilding, or the fresh floor starts dissolving itself immediately
 
@@ -672,24 +591,26 @@ function responsiveCellPx() {
 // both handlers below), so e.g. widening a desktop browser window past
 // the breakpoint, or the reverse, actually changes grain size without
 // a reload.
+// grainUserOverridden never becomes true on this file anymore — the
+// manual grain-size slider that used to set it lived in the tuning
+// panel, which moved to js/sand-editor.js along with the rest of the
+// authoring UI. Left in place (rather than deleted outright) as the
+// documented hook for that: if the editor grows a way to reach back into
+// this module and drive CELL_PX directly, this is the flag it should
+// set. Until then this always stays false, meaning the site always
+// re-derives grain size from the breakpoint on resize/rotation — which
+// is exactly what every real visitor already experienced, since the
+// slider was hidden behind editMode and no visitor ever had a way to
+// touch it in the first place.
 let grainUserOverridden = false;
-// ELECTRIC VIVID RAINBOW FORK — was `const`, now `let`: the tuning
-// panel's grain-size slider reassigns this directly (same module, legal)
-// and calls resizeBox() itself to apply it. Nothing else in this file
-// reads CELL_PX before resizeBox runs, so a stale read isn't possible.
 let CELL_PX = responsiveCellPx();
-let grainSlider = null;   // assigned once the tuning panel builds it, near the bottom of this file
-// Re-checks the responsive default and, if it's changed and the user
-// hasn't manually overridden it, applies it by driving the actual
-// slider element — dispatching a real "input" event reuses the
-// slider's own onInput callback (below) instead of duplicating the
-// CELL_PX/resizeBox/applyDomColliders sequence a second time here.
 function maybeApplyResponsiveGrain() {
-  if (grainUserOverridden || !grainSlider) return;
+  if (grainUserOverridden) return;
   const target = responsiveCellPx();
   if (target === CELL_PX) return;
-  grainSlider.value = target;
-  grainSlider.dispatchEvent(new Event("input"));
+  CELL_PX = target;
+  resizeBox();
+  applySiteLayout();
 }
 const box = document.getElementById("box");
 const canvasIds = ["base", "glow", "blobglow", "laserglow", "vecOverlay"];
@@ -920,7 +841,7 @@ function beginCarry(anchorWX, anchorWY, clientX, clientY) {
       // too, and guarding by set membership is safer than guarding by id
       // (a future material added to one of these structural sets would be
       // automatically immune without needing a separate id check here).
-      if (domColliderCells.has(i) || floorCells.has(i) || editorCells.has(i)) continue;
+      if (domColliderCells.has(i) || floorCells.has(i)) continue;
       carriedCells.push({ dx, dy, mat: grid[i] });
       grid[i] = EMPTY;
       clearSettling(i);
@@ -996,125 +917,14 @@ function drawCarryPreview() {
   }
 }
 
-// ---- STUDIO EDITOR — rectangle fill/erase tool. Only active when
-// editMode is on AND the toolbar's tool is set to "fill" or "erase";
-// otherwise every pointer event below falls straight through to the
-// existing paint/carry gesture, byte-for-byte the same as before the
-// editor existed. Drag defines a rectangle in world-cell space (any
-// direction — normalizedRect below sorts it out), release commits it.
-let editMode = false;
-let editorTool = "paint";   // "paint" | "fill" | "erase"
-let showGrid = false;
-let overlaysVisible = true;   // tuning panel + palette bar
-let uiHidden = false;         // hard kill-switch for every bit of this file's own on-screen chrome
-
-let rectDragging = false;
-let rectStartWX = 0, rectStartWY = 0, rectCurWX = 0, rectCurWY = 0;
-
-function normalizedRect(x0, y0, x1, y1) {
-  return {
-    x0: Math.max(0, Math.min(x0, x1)),
-    y0: Math.max(0, Math.min(y0, y1)),
-    x1: Math.min(W, Math.max(x0, x1) + 1),
-    y1: Math.min(FLOOR_Y + 1, Math.max(y0, y1) + 1),
-  };
-}
-
-// Fill writes selectedMat directly (bulk tool, not gated on "must be
-// empty" like paintAt/placeMaterial — it's meant to overwrite) and
-// tracks every written cell as editorCells structure. Erase writes
-// EMPTY and drops the cell from all three structural tracking sets, so
-// erasing a chunk of floor or an old ledge actually un-registers it
-// rather than leaving a stale entry behind.
-function commitRect(x0, y0, x1, y1, erase) {
-  const r = normalizedRect(x0, y0, x1, y1);
-  for (let y = r.y0; y < r.y1; y++) {
-    for (let x = r.x0; x < r.x1; x++) {
-      const i = idx(x, y);
-      floorCells.delete(i);
-      domColliderCells.delete(i);
-      editorCells.delete(i);
-      if (erase) {
-        grid[i] = EMPTY;
-      } else {
-        grid[i] = selectedMat;
-        editorCells.add(i);
-      }
-      clearSettling(i);
-      wake(x, y);
-    }
-  }
-}
-
-// ---- STUDIO EDITOR — grid + rect-drag overlay canvas. Same
-// screen-space, unscaled sizing convention as carryOverlay/carryGlow
-// above, own dedicated canvas rather than sharing one of those (they're
-// cleared and redrawn every frame by their own owners already, and this
-// needs to draw regardless of whether a carry is in progress).
-const editorOverlayCanvas = document.createElement("canvas");
-editorOverlayCanvas.style.cssText = "position:fixed;inset:0;z-index:13;pointer-events:none;";
-document.body.appendChild(editorOverlayCanvas);
-const editorOverlayCtx = editorOverlayCanvas.getContext("2d");
-function resizeEditorOverlay() {
-  editorOverlayCanvas.width = window.innerWidth;
-  editorOverlayCanvas.height = window.innerHeight;
-}
-resizeEditorOverlay();
-window.addEventListener("resize", resizeEditorOverlay);
-window.addEventListener("orientationchange", resizeEditorOverlay);
-
-function drawEditorOverlay() {
-  editorOverlayCtx.clearRect(0, 0, editorOverlayCanvas.width, editorOverlayCanvas.height);
-  if (uiHidden || (!showGrid && !rectDragging)) return;
-  const rect = canvases[0].getBoundingClientRect();
-  const pxPerWX = rect.width / (VIEW_W * camera.scale);
-  const pxPerWY = rect.height / (VIEW_H * camera.scale);
-
-  if (showGrid) {
-    editorOverlayCtx.strokeStyle = "rgba(232,223,255,0.18)";
-    editorOverlayCtx.lineWidth = 1;
-    editorOverlayCtx.beginPath();
-    const xStart = Math.floor(camera.x), xEnd = Math.ceil(camera.x + VIEW_W * camera.scale);
-    const yStart = Math.floor(camera.y), yEnd = Math.ceil(camera.y + VIEW_H * camera.scale);
-    for (let x = xStart; x <= xEnd; x++) {
-      const sx = Math.round(rect.left + (x - camera.x) * pxPerWX) + 0.5;
-      editorOverlayCtx.moveTo(sx, rect.top);
-      editorOverlayCtx.lineTo(sx, rect.top + rect.height);
-    }
-    for (let y = yStart; y <= yEnd; y++) {
-      const sy = Math.round(rect.top + (y - camera.y) * pxPerWY) + 0.5;
-      editorOverlayCtx.moveTo(rect.left, sy);
-      editorOverlayCtx.lineTo(rect.left + rect.width, sy);
-    }
-    editorOverlayCtx.stroke();
-  }
-
-  if (rectDragging) {
-    const r = normalizedRect(rectStartWX, rectStartWY, rectCurWX, rectCurWY);
-    const sx = rect.left + (r.x0 - camera.x) * pxPerWX;
-    const sy = rect.top + (r.y0 - camera.y) * pxPerWY;
-    const sw = (r.x1 - r.x0) * pxPerWX;
-    const sh = (r.y1 - r.y0) * pxPerWY;
-    const erasing = editorTool === "erase";
-    editorOverlayCtx.fillStyle = erasing ? "rgba(255,44,217,0.18)" : "rgba(0,229,255,0.18)";
-    editorOverlayCtx.fillRect(sx, sy, sw, sh);
-    editorOverlayCtx.strokeStyle = erasing ? "#FF2CD9" : "#00E5FF";
-    editorOverlayCtx.lineWidth = 2;
-    editorOverlayCtx.strokeRect(sx, sy, sw, sh);
-  }
-}
-
+// Plain paint/carry gesture — no editMode, no rect tool. That whole
+// surface (fill/erase drag, grid overlay, editMode/editorTool/showGrid/
+// overlaysVisible/uiHidden state) moved to js/sand-editor.js.
 box.addEventListener("pointerdown", (e) => {
   pointerDown = true;
   box.setPointerCapture(e.pointerId);
   lastPointerX = e.clientX; lastPointerY = e.clientY;
   const [x, y] = screenToCell(e.clientX, e.clientY);
-  if (editMode && (editorTool === "fill" || editorTool === "erase")) {
-    rectDragging = true;
-    rectStartWX = rectCurWX = x;
-    rectStartWY = rectCurWY = y;
-    return;
-  }
   if (x >= 0 && x < W && y >= 0 && y < FLOOR_Y && grid[idx(x, y)] !== EMPTY) {
     beginCarry(x, y, e.clientX, e.clientY);
   } else {
@@ -1124,11 +934,6 @@ box.addEventListener("pointerdown", (e) => {
 box.addEventListener("pointermove", (e) => {
   lastPointerX = e.clientX; lastPointerY = e.clientY;
   if (!pointerDown) return;
-  if (rectDragging) {
-    const [x, y] = screenToCell(e.clientX, e.clientY);
-    rectCurWX = x; rectCurWY = y;
-    return;
-  }
   if (carrying) {
     carryPointerX = e.clientX; carryPointerY = e.clientY;   // no grid write while carrying — loop() redraws the preview from this every frame
     return;
@@ -1136,13 +941,8 @@ box.addEventListener("pointermove", (e) => {
   const [x, y] = screenToCell(e.clientX, e.clientY);
   paintAt(x, y);
 });
-function endRectDrag(commit) {
-  if (!rectDragging) return;
-  if (commit) commitRect(rectStartWX, rectStartWY, rectCurWX, rectCurWY, editorTool === "erase");
-  rectDragging = false;
-}
-box.addEventListener("pointerup", () => { pointerDown = false; endRectDrag(true); dropCarry(); });
-box.addEventListener("pointercancel", () => { pointerDown = false; endRectDrag(false); dropCarry(); });
+box.addEventListener("pointerup", () => { pointerDown = false; dropCarry(); });
+box.addEventListener("pointercancel", () => { pointerDown = false; dropCarry(); });
 
 // ---- main loop, real elapsed time drives tick count. No ambient rain —
 // sand only appears where it's actually painted now.
@@ -1182,7 +982,6 @@ function loop(now) {
     paintAt(x, y);
   }
   drawCarryPreview();   // no-ops (just clears) when not carrying — cheap, always safe to call
-  drawEditorOverlay();  // no-ops (just clears) unless the editor's grid or a rect-drag is actually visible
   tickAccumulator = Math.min(tickAccumulator + dt, TICK_MS * MAX_TICKS_PER_FRAME);
   while (tickAccumulator >= TICK_MS) {
     step();
@@ -1264,20 +1063,14 @@ for (const color of SPECTRUM_COLORS) addSwatch(paletteGroups.liquids, paletteByN
 for (const color of SPECTRUM_COLORS) addSwatch(paletteGroups.gases, paletteByName[`${color} Gas`], swatchEls);
 swatchEls[0].style.boxShadow = "0 0 0 3px #fff, 0 0 12px 2px #fff";   // Red Sand starts selected
 
-// ---- TUNING PANEL — hand-tuning UI for grain size + the glow layer's
-// CSS filter + the non-emissive glow strength (materials.js's `emAmt`,
-// see render.js). Real DOM, own scroll region, collapsible so it doesn't
-// eat screen on phones. Every slider writes straight to the live value it
-// controls and re-derives anything downstream (resizeBox for grain size,
-// style.filter strings for glow) — no page reload needed for any of it.
-// This whole panel is site-only scaffolding, not meant to ship to the
-// real game; the VALUES it lands on are what's meant to port back (see
-// HANDOFF §5-style note at end of session).
+// ---- glow layer filter — fixed values, hand-tuned. The live sliders
+// that used to adjust these (grain size, blur/saturate/brightness,
+// non-emissive glow strength, dirty-rects toggle) lived in a tuning
+// panel that was gated behind editMode and never reachable by a real
+// visitor anyway (panel.style.display stayed "none" on the public
+// page). That whole UI moved to js/sand-editor.js. These are the values
+// it was already sitting at.
 const glowEl = document.getElementById("glow");
-
-// Current live values for the glow layer's three filter components —
-// tracked here (not read back from style.filter, which is a pain to
-// parse) since the panel is the only thing that ever changes them now.
 const glowState = { blur: 5, sat: 1.6, bright: 130 };
 function applyGlowFilter() {
   const filterStr = `blur(${glowState.blur}px) saturate(${glowState.sat}) brightness(${glowState.bright}%)`;
@@ -1288,563 +1081,4 @@ function applyGlowFilter() {
 }
 applyGlowFilter();   // carryGlowCanvas has no filter until this runs once — without
                       // an initial call it'd render un-blurred (a hard-edged bright
-                      // square) for any carry that starts before a slider is touched
-
-const panel = document.createElement("div");
-panel.style.cssText =
-  "position:fixed;bottom:8px;right:8px;z-index:11;width:230px;max-height:70vh;overflow-y:auto;" +
-  "background:rgba(10,7,20,0.88);border:1px solid rgba(255,255,255,0.15);border-radius:8px;" +
-  "padding:8px 10px;font:11px/1.4 'JetBrains Mono',monospace;color:#E8DFFF;pointer-events:auto;";
-
-const panelHeader = document.createElement("div");
-panelHeader.textContent = "TUNING ▾";
-panelHeader.style.cssText = "cursor:pointer;font-weight:600;letter-spacing:0.05em;margin-bottom:4px;user-select:none;";
-const panelBody = document.createElement("div");
-let panelOpen = true;
-panelHeader.addEventListener("pointerdown", (e) => {
-  e.stopPropagation();
-  panelOpen = !panelOpen;
-  panelBody.style.display = panelOpen ? "" : "none";
-  panelHeader.textContent = panelOpen ? "TUNING ▾" : "TUNING ▸";
-});
-panel.appendChild(panelHeader);
-panel.appendChild(panelBody);
-
-// Prevent the sim's own pointerdown painting from firing when the user
-// is just trying to drag a slider — same pattern the palette swatches
-// already use (stopPropagation on pointerdown).
-panel.addEventListener("pointerdown", (e) => e.stopPropagation());
-
-function addSlider(label, min, max, step, value, onInput) {
-  const row = document.createElement("div");
-  row.style.cssText = "margin:6px 0;";
-  const labelEl = document.createElement("div");
-  const valEl = document.createElement("span");
-  valEl.textContent = value;
-  labelEl.textContent = label + ": ";
-  labelEl.appendChild(valEl);
-  labelEl.style.cssText = "margin-bottom:2px;";
-  const input = document.createElement("input");
-  input.type = "range";
-  input.min = min; input.max = max; input.step = step; input.value = value;
-  input.style.cssText = "width:100%;";
-  input.addEventListener("input", () => {
-    const v = parseFloat(input.value);
-    valEl.textContent = v;
-    onInput(v);
-  });
-  row.appendChild(labelEl);
-  row.appendChild(input);
-  panelBody.appendChild(row);
-  return input;
-}
-
-// ELECTRIC RAINBOW MAGIC FORK — checkbox variant, same row/label shape as
-// addSlider above, for boolean toggles (currently just dirty-rects).
-function addCheckbox(label, checked, onChange) {
-  const row = document.createElement("div");
-  row.style.cssText = "margin:6px 0;display:flex;align-items:center;gap:6px;";
-  const input = document.createElement("input");
-  input.type = "checkbox";
-  input.checked = checked;
-  const labelEl = document.createElement("label");
-  labelEl.textContent = label;
-  input.addEventListener("change", () => onChange(input.checked));
-  row.appendChild(input);
-  row.appendChild(labelEl);
-  panelBody.appendChild(row);
-  return input;
-}
-
-// grainSlider assigned here to the module-level binding declared up by
-// CELL_PX (maybeApplyResponsiveGrain drives this same element on
-// resize/rotation). The onInput callback below is the ONE place that
-// actually changes CELL_PX now — both a manual drag and a responsive
-// re-check funnel through it, so there's only one place that has to
-// remember to call applyDomColliders() after resizeBox().
-//   BUG FIXED here: this previously called resizeBox() only. resizeBox()
-// changes the canvas element's CSS size but nothing about window size,
-// so the resize listener's own applyDomColliders() debounce never fired
-// for a manual grain change — domColliderCells stayed put at the OLD
-// screen<->world ratio while the canvas (and therefore the real text-to-
-// world mapping) had already moved. Grain changes are deliberate,
-// infrequent user actions (not a resize drag), so calling
-// applyDomColliders() directly rather than debouncing is fine here.
-grainSlider = addSlider("Grain size (CELL_PX)", 2, 12, 1, CELL_PX, (v) => {
-  CELL_PX = v;
-  resizeBox();
-  applySiteLayout();
-});
-// Only a genuine user drag should count as an override — dispatching a
-// synthetic "input" event (maybeApplyResponsiveGrain) doesn't fire
-// pointerdown, so the responsive default keeps re-asserting itself
-// until the person actually touches this slider once.
-grainSlider.addEventListener("pointerdown", () => { grainUserOverridden = true; });
-
-const glowHeading = document.createElement("div");
-glowHeading.textContent = "— #glow (base bloom) —";
-glowHeading.style.cssText = "margin-top:8px;opacity:0.7;";
-panelBody.appendChild(glowHeading);
-addSlider("Blur px", 0, 20, 1, glowState.blur, (v) => { glowState.blur = v; applyGlowFilter(); });
-addSlider("Saturate", 0, 3, 0.1, glowState.sat, (v) => { glowState.sat = v; applyGlowFilter(); });
-addSlider("Brightness %", 50, 250, 5, glowState.bright, (v) => { glowState.bright = v; applyGlowFilter(); });
-
-const matHeading = document.createElement("div");
-matHeading.textContent = "— non-emissive glow —";
-matHeading.style.cssText = "margin-top:8px;opacity:0.7;";
-panelBody.appendChild(matHeading);
-addSlider("Sand/Stone/etc strength", 0, 2, 0.05, 1, (v) => {
-  setNonEmissiveGlowMult(v);
-  forceRenderNextFrame = true;   // this changes render() output without touching the grid — the dirty-check (loop(), above) needs an explicit nudge or it'd stay stale while idle
-});
-
-const perfHeading = document.createElement("div");
-perfHeading.textContent = "— perf (site tuning session) —";
-perfHeading.style.cssText = "margin-top:8px;opacity:0.7;";
-panelBody.appendChild(perfHeading);
-// ELECTRIC RAINBOW MAGIC FORK — dirty-rects for render()'s flat pixel pass
-// (render.js). ON-DEVICE VERIFIED this session (Crash): the heat/near-
-// freeze symptom from heavy multi-material coverage got dramatically
-// harder to reproduce with this on. Default flipped ON (render.js) to
-// match — checkbox now starts checked, still here as a real off-switch
-// if a seam/ghosting/stuck-pixel artifact ever turns up around a
-// subchunk boundary, not as a permanent opt-in.
-addCheckbox("Dirty rects (perf, verified on-device)", true, (checked) => {
-  setFlatDirtyRectsEnabled(checked);
-  forceRenderNextFrame = true;   // toggling itself doesn't touch the grid, needs an explicit nudge like the glow slider above
-});
-
-document.body.appendChild(panel);
-panel.style.display = "none";   // site tuning scaffolding — hidden on the public page
-
-// ==================== STUDIO EDITOR ====================
-// Everything from here down is authoring tooling for Crash, not
-// visitor-facing site behavior. editMode/uiHidden/overlaysVisible all
-// default to their "visitor" state — a plain load of this file never
-// shows any of it. The parent frame (index.html's module picker) is the
-// only thing that turns it on, via window.SandEditor below, so this
-// stays entirely dormant when sands.html is loaded on its own.
-
-const editorToolbar = document.createElement("div");
-editorToolbar.style.cssText =
-  "position:fixed;top:8px;right:8px;z-index:14;display:none;flex-direction:column;gap:6px;" +
-  "background:rgba(10,7,20,0.92);border:1px solid rgba(255,255,255,0.15);border-radius:8px;" +
-  "padding:8px 10px;font:11px/1.4 'JetBrains Mono',monospace;color:#E8DFFF;pointer-events:auto;width:190px;";
-// Same reasoning as the tuning panel above: a click/drag inside this
-// toolbar shouldn't leak through to the sim's own pointerdown painting.
-editorToolbar.addEventListener("pointerdown", (e) => e.stopPropagation());
-
-const toolbarHeading = document.createElement("div");
-toolbarHeading.textContent = "EDITOR";
-toolbarHeading.style.cssText = "font-weight:600;letter-spacing:0.05em;margin-bottom:2px;";
-editorToolbar.appendChild(toolbarHeading);
-
-function addToolbarButton(label) {
-  const b = document.createElement("button");
-  b.textContent = label;
-  b.style.cssText =
-    "font:11px 'JetBrains Mono',monospace;color:#E8DFFF;background:rgba(255,255,255,0.06);" +
-    "border:1px solid rgba(255,255,255,0.18);border-radius:5px;padding:5px 6px;cursor:pointer;text-align:left;";
-  editorToolbar.appendChild(b);
-  return b;
-}
-
-const toolHint = document.createElement("div");
-toolHint.textContent = "Paint uses the palette below.";
-toolHint.style.cssText = "opacity:0.6;font-size:10px;margin:-2px 0 2px;";
-editorToolbar.appendChild(toolHint);
-
-const toolBtns = {};
-function setActiveTool(tool) {
-  editorTool = tool;
-  for (const t in toolBtns) {
-    toolBtns[t].style.borderColor = t === tool ? "#00E5FF" : "rgba(255,255,255,0.18)";
-  }
-  // Leaving a tool mid-drag shouldn't leave a stuck preview rectangle.
-  rectDragging = false;
-}
-toolBtns.paint = addToolbarButton("\u270f\ufe0f Paint / carry");
-toolBtns.fill  = addToolbarButton("\u25a4 Fill rectangle");
-toolBtns.erase = addToolbarButton("\u2715 Erase rectangle");
-toolBtns.paint.addEventListener("click", () => setActiveTool("paint"));
-toolBtns.fill.addEventListener("click", () => setActiveTool("fill"));
-toolBtns.erase.addEventListener("click", () => setActiveTool("erase"));
-setActiveTool("paint");
-
-const gridRow = document.createElement("label");
-gridRow.style.cssText = "display:flex;align-items:center;gap:6px;margin-top:4px;cursor:pointer;";
-const gridCheckbox = document.createElement("input");
-gridCheckbox.type = "checkbox";
-gridCheckbox.addEventListener("change", () => { showGrid = gridCheckbox.checked; });
-gridRow.appendChild(gridCheckbox);
-gridRow.appendChild(document.createTextNode("Grid overlay"));
-editorToolbar.appendChild(gridRow);
-
-const exportHeading = document.createElement("div");
-exportHeading.textContent = "\u2014 save \u2014";
-exportHeading.style.cssText = "margin-top:6px;opacity:0.7;";
-editorToolbar.appendChild(exportHeading);
-
-function downloadBlob(filename, content, type) {
-  const blob = new Blob([content], { type });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
-function exportJSONFile() {
-  const payload = {
-    version: 1,
-    exportedAt: new Date().toISOString(),
-    W, H, CELL_PX,
-    length: grid.length,
-    runs: encodeGridRLE(grid),
-  };
-  downloadBlob(`sands-state-${Date.now()}.json`, JSON.stringify(payload), "application/json");
-}
-
-// ---- HTML export. Fetches THIS document's own live markup (works
-// against the local dev server or any real HTTP host; a file:// load
-// may block this fetch under some browsers' CORS rules for local files
-// — export JSON and hand-splice at that point if that ever comes up)
-// and string-injects the grid snapshot as a plain inline <script>
-// immediately before the sand-bg.js module tag, so a fresh load of the
-// exported file finds window.__INITIAL_GRID__ already set before this
-// module's own top-level code runs (see usingInitialGrid near the top
-// of this file). No build step, no server round-trip beyond the one
-// fetch of the page's own markup.
-async function exportHTML() {
-  let html;
-  try {
-    const res = await fetch(location.href);
-    html = await res.text();
-  } catch (e) {
-    alert("HTML export failed (couldn't fetch this page's own source — are you running it off a local server, not file://?). Exporting JSON instead.");
-    exportJSONFile();
-    return;
-  }
-  const payload = { runs: encodeGridRLE(grid), length: grid.length };
-  const anchor = '<script type="module" src="./js/sand-bg.js"></script>';
-  if (!html.includes(anchor)) {
-    alert("HTML export failed (couldn't find the sand-bg.js script tag to inject state before). Exporting JSON instead.");
-    exportJSONFile();
-    return;
-  }
-  const inject = `<script>window.__INITIAL_GRID__ = ${JSON.stringify(payload)};</script>\n  `;
-  downloadBlob("index.html", html.replace(anchor, inject + anchor), "text/html");
-}
-
-function importJSONFile(file) {
-  const reader = new FileReader();
-  reader.onload = () => {
-    let payload;
-    try { payload = JSON.parse(reader.result); }
-    catch (e) { alert("Import failed: not valid JSON."); return; }
-    if (!payload || !Array.isArray(payload.runs) || payload.length !== W * H) {
-      alert("Import failed: this file's grid size doesn't match the current build (W*H). It may be from a different session/build.");
-      return;
-    }
-    setGrid(decodeGridRLE(payload.runs, payload.length));
-    reconstructTrackingSetsFromGrid();
-    chunkAwake.fill(1);   // cheap (66 chunks, not 270k cells) — forces physics/render to actually look at everything just-loaded
-    forceRenderNextFrame = true;
-    applyDomColliders();
-  };
-  reader.readAsText(file);
-}
-
-addToolbarButton("Export HTML (site file)").addEventListener("click", exportHTML);
-addToolbarButton("Export JSON (resume editing)").addEventListener("click", exportJSONFile);
-
-const importRow = document.createElement("div");
-importRow.style.cssText = "margin-top:2px;";
-const importLabel = document.createElement("div");
-importLabel.textContent = "Import JSON:";
-importLabel.style.cssText = "margin-bottom:2px;";
-const importInput = document.createElement("input");
-importInput.type = "file";
-importInput.accept = "application/json";
-importInput.style.cssText = "width:100%;font-size:10px;color:#E8DFFF;";
-importInput.addEventListener("change", () => {
-  const file = importInput.files[0];
-  if (file) importJSONFile(file);
-  importInput.value = "";
-});
-importRow.appendChild(importLabel);
-importRow.appendChild(importInput);
-editorToolbar.appendChild(importRow);
-
-document.body.appendChild(editorToolbar);
-
-// ==================== STUDIO EDITOR — MATERIAL LAB ====================
-// Ported from the game's sandbox — js/ui-matlab.js is the real editor
-// (property sliders, reaction rows, color picker, all of it), lifted
-// verbatim. It only needed materials.js (already identical to the
-// game's), render.js's rebuildTileFor (already present, unmodified),
-// and color.js (new file, also verbatim) — nothing about it was written
-// for this site, nothing about it had to change to work here.
-//   NOT ported: tuning.js/ui-tuning.js's full physics-tuning sheet
-// (particles, ships, lasers, tesla — none of which this site has, and
-// two of its own imports don't even exist in this site's state.js
-// anymore, since physics.js's pressured() was rewritten with local
-// constants during the water-streak fix). ui-matlab.js's panel DOES
-// assume ui-tuning.js's shared row CSS already exists on the page
-// (.propRow/.propLabel/.propControls/.tuneGroupLabel/.tuneGroup) — that
-// tiny CSS-only piece is reproduced directly below rather than pulled in
-// through the broken import chain.
-const SHARED_ROW_CSS = `
-.tuneGroupLabel{ font-size:14px; color:#FFCF56; text-transform:uppercase;
-  letter-spacing:0.08em; margin:10px 2px 6px; display:flex; justify-content:space-between;
-  align-items:center; cursor:pointer; user-select:none; }
-.tuneGroupLabel:first-child{ margin-top:2px; }
-.tuneGroupLabel .arrow{ font-size:9px; transition:transform .15s; }
-.propRow{ margin-bottom:12px; }
-.propRow .propLabel{ display:flex; justify-content:space-between; font-size:11px;
-  color:#8b7fa8; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:4px; }
-.propRow .propLabel b{ color:#E8DFFF; font-weight:normal; }
-.propRow .propControls{ display:flex; gap:6px; align-items:center; }
-.propRow input[type=range]{ flex:1 1 auto; accent-color:#FFCF56; }
-.propRow input[type=number]{ width:64px; background:#0A0714;
-  border:1px solid #2a2140; color:#E8DFFF; font:inherit;
-  font-size:11px; padding:5px; border-radius:5px; }
-`;
-const sharedRowStyleEl = document.createElement("style");
-sharedRowStyleEl.textContent = SHARED_ROW_CSS;
-document.head.appendChild(sharedRowStyleEl);
-
-// ---- slide-in panel, same left-edge convention the sandbox used.
-// Built entirely in JS like every other panel in this file — no HTML
-// changes needed to add this.
-const matLabPanel = document.createElement("div");
-matLabPanel.style.cssText =
-  "position:fixed;left:0;top:0;bottom:0;z-index:16;width:min(300px,86vw);" +
-  "background:rgba(10,7,20,0.97);border-right:1px solid rgba(255,255,255,0.15);" +
-  "padding:12px;font:11px/1.4 'JetBrains Mono',monospace;color:#E8DFFF;" +
-  "overflow-y:auto;pointer-events:auto;transform:translateX(-100%);transition:transform .18s ease;";
-matLabPanel.addEventListener("pointerdown", (e) => e.stopPropagation());
-
-const matSelectRow = document.createElement("div");
-matSelectRow.style.cssText = "margin-bottom:10px;";
-const matSelectLabel = document.createElement("div");
-matSelectLabel.textContent = "Editing material:";
-matSelectLabel.style.cssText = "opacity:0.7;margin-bottom:4px;";
-const matSelect = document.createElement("select");
-matSelect.style.cssText =
-  "width:100%;padding:6px;background:#171227;color:#E8DFFF;" +
-  "border:1px solid #2a2140;border-radius:6px;font-size:12px;";
-matSelectRow.appendChild(matSelectLabel);
-matSelectRow.appendChild(matSelect);
-matLabPanel.appendChild(matSelectRow);
-
-const matLabBody = document.createElement("div");
-matLabPanel.appendChild(matLabBody);
-
-const matLabSaveHeading = document.createElement("div");
-matLabSaveHeading.textContent = "\u2014 material table \u2014";
-matLabSaveHeading.style.cssText = "margin-top:10px;opacity:0.7;";
-matLabPanel.appendChild(matLabSaveHeading);
-
-const matLabCaveat = document.createElement("div");
-matLabCaveat.textContent =
-  "Edits here are live in this browser tab only until saved. Nothing writes back to materials.js on disk.";
-matLabCaveat.style.cssText = "font-size:10px;opacity:0.6;margin-bottom:6px;";
-matLabPanel.appendChild(matLabCaveat);
-
-document.body.appendChild(matLabPanel);
-
-// ---- twins (SOLID_TWIN's self-mapped solids aside) are derived, not
-// independently authored — excluded from the picker so there's nothing
-// to accidentally edit that resyncTwinAppearance() would just overwrite
-// on the next color change to its source anyway.
-function editableMaterialIds() {
-  const twinIds = new Set();
-  for (const [srcId, twinId] of Object.entries(SOLID_TWIN)) if (+srcId !== twinId) twinIds.add(twinId);
-  for (const twinId of Object.values(STAMP_TWIN)) twinIds.add(twinId);
-  return MATS.filter(m => m.behavior !== "void" && !twinIds.has(m.id)).map(m => m.id);
-}
-
-function rebuildMatSelect() {
-  const current = matSelect.value ? +matSelect.value : selectedMat;
-  matSelect.innerHTML = "";
-  for (const id of editableMaterialIds()) {
-    const opt = document.createElement("option");
-    opt.value = id;
-    opt.textContent = MATBY[id].name;
-    matSelect.appendChild(opt);
-  }
-  matSelect.value = current;
-}
-rebuildMatSelect();
-
-let matLabMounted = false;
-function ensureMatLabMounted() {
-  if (matLabMounted) return;
-  matLabMounted = true;
-  mountMatLab(matLabBody, { showClose: false, initialMat: selectedMat });
-}
-
-matSelect.addEventListener("change", () => {
-  const id = +matSelect.value;
-  selectedMat = id;   // editing a material and painting with it are the same "selected material"
-  ensureMatLabMounted();
-  setMatLabMaterial(id);
-});
-
-// ---- material table save/export. Mirrors the site's OWN existing
-// custom-table contract in materials.js (resolveCustomMats/
-// loadCustomTable/CUSTOM_TABLE_STORAGE_KEY) — that whole mechanism was
-// already there, forked from the game, and simply had nothing writing
-// to it yet. Serialization here deliberately mirrors materials.js's own
-// nameifyRefs so the two agree on shape: cross-references (decayTo,
-// meltTo, freezeTo, teslaReact, spawnId, onContact, emits) are written
-// as NAME strings, everything else copied as-is. `id` and any
-// `_staged_*` scratch key (ui-matlab.js's own preview-value convention)
-// are stripped — neither is a real material field.
-function nameOfMat(id) { const m = MATBY[id]; return m ? m.name : undefined; }
-const REF_KEYS = ["decayTo", "meltTo", "freezeTo", "teslaReact", "spawnId"];
-function serializeCustomMaterial(m) {
-  const out = {};
-  for (const k of Object.keys(m)) {
-    if (k === "id" || k.startsWith("_staged_")) continue;
-    out[k] = m[k];
-  }
-  if (out.rgb) out.rgb = [...out.rgb];
-  for (const k of REF_KEYS) if (out[k] !== undefined) out[k] = nameOfMat(out[k]);
-  if (out.emits) out.emits = { mat: nameOfMat(out.emits.matId), chance: out.emits.chance };
-  if (out.onContact) {
-    const oc = {};
-    for (const [triggerId, rule] of Object.entries(out.onContact)) {
-      const triggerName = nameOfMat(+triggerId);
-      if (triggerName === undefined) continue;
-      oc[triggerName] = (rule && typeof rule === "object")
-        ? { to: nameOfMat(rule.to), chance: rule.chance, settled: rule.settled }
-        : nameOfMat(rule);
-    }
-    out.onContact = oc;
-  }
-  return out;
-}
-function buildCustomTableExport() {
-  const twinIds = new Set();
-  for (const [srcId, twinId] of Object.entries(SOLID_TWIN)) if (+srcId !== twinId) twinIds.add(twinId);
-  for (const twinId of Object.values(STAMP_TWIN)) twinIds.add(twinId);
-  const customMats = MATS.filter(m =>
-    m.behavior !== "void" && !CORE_MATERIAL_NAMES.includes(m.name) && !twinIds.has(m.id));
-  if (customMats.length > MAX_CUSTOM_MATERIALS) {
-    alert(`Warning: ${customMats.length} custom materials exceeds the ${MAX_CUSTOM_MATERIALS} cap \u2014 materials.js will reject this table on load. Trim before saving.`);
-  }
-  return { materials: customMats.map(serializeCustomMaterial), tuning: null };
-}
-function exportMaterialTableFile() {
-  downloadBlob(`material-table-${Date.now()}.json`, JSON.stringify(buildCustomTableExport(), null, 2), "application/json");
-}
-// "Save & reload" is a convenience for testing in THIS browser, not the
-// canonical save — same file-first philosophy as the grid export above.
-// materials.js's loadCustomTable() only runs once at module top-level
-// load, so there's no way to apply a table without a real reload.
-function saveMaterialTableAndReload() {
-  const payload = buildCustomTableExport();
-  try { localStorage.setItem(CUSTOM_TABLE_STORAGE_KEY, JSON.stringify(payload)); }
-  catch (e) { alert("Couldn't save to this browser's storage: " + e.message); return; }
-  location.reload();
-}
-function importMaterialTableFile(file) {
-  const reader = new FileReader();
-  reader.onload = () => {
-    try { JSON.parse(reader.result); }   // sanity check only — materials.js's own loadCustomTable() does the real validation on next load
-    catch (e) { alert("Import failed: not valid JSON."); return; }
-    localStorage.setItem(CUSTOM_TABLE_STORAGE_KEY, reader.result);
-    location.reload();
-  };
-  reader.readAsText(file);
-}
-
-function addMatLabButton(label) {
-  const b = document.createElement("button");
-  b.textContent = label;
-  b.style.cssText =
-    "display:block;width:100%;font:11px 'JetBrains Mono',monospace;color:#E8DFFF;" +
-    "background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.18);" +
-    "border-radius:5px;padding:6px;cursor:pointer;text-align:left;margin-bottom:4px;";
-  matLabPanel.appendChild(b);
-  return b;
-}
-addMatLabButton("Download table (JSON)").addEventListener("click", exportMaterialTableFile);
-addMatLabButton("Save to this browser + reload").addEventListener("click", saveMaterialTableAndReload);
-const matImportRow = document.createElement("div");
-matImportRow.style.cssText = "margin-top:2px;";
-const matImportLabel = document.createElement("div");
-matImportLabel.textContent = "Load table from file:";
-matImportLabel.style.cssText = "margin-bottom:2px;opacity:0.7;";
-const matImportInput = document.createElement("input");
-matImportInput.type = "file";
-matImportInput.accept = "application/json";
-matImportInput.style.cssText = "width:100%;font-size:10px;color:#E8DFFF;";
-matImportInput.addEventListener("change", () => {
-  const file = matImportInput.files[0];
-  if (file) importMaterialTableFile(file);
-});
-matImportRow.appendChild(matImportLabel);
-matImportRow.appendChild(matImportInput);
-matLabPanel.appendChild(matImportRow);
-
-let matLabOpen = false;
-function setMatLabOpen(open) {
-  matLabOpen = open;
-  matLabPanel.style.transform = open ? "translateX(0)" : "translateX(-100%)";
-  if (open) { ensureMatLabMounted(); rebuildMatSelect(); setMatLabMaterial(selectedMat); }
-}
-const matLabToggleBtn = addToolbarButton("\ud83e\uddea Materials");
-matLabToggleBtn.addEventListener("click", () => setMatLabOpen(!matLabOpen));
-
-
-// ---- cross-frame control surface. The parent frame (index.html's
-// module picker) owns the actual toggle buttons — edit mode, overlays,
-// hide-all-UI — since those live in chrome that has to persist across
-// which module is loaded. This is the one thing on this side of the
-// iframe boundary: read the toggles, show/hide this file's own DOM,
-// nothing more. Exposed as a plain global rather than a message-based
-// API because same-origin + same-tab makes a direct call simpler and
-// synchronous, with no listener/ack plumbing to keep in sync.
-function applyUIVisibility() {
-  const hide = uiHidden;
-  const showPalette = overlaysVisible && !hide;
-  editorToolbar.style.display = (editMode && !hide) ? "flex" : "none";
-  for (const group of Object.values(paletteGroups)) {
-    group.style.display = showPalette ? "flex" : "none";
-  }
-  panel.style.display = (editMode && overlaysVisible && !hide) ? "block" : "none";
-  // The material lab is edit-mode-only chrome, same as the rest of
-  // editorToolbar — but it's a separate slide-in element (left edge, not
-  // inside editorToolbar itself), so it needs its own visibility pass.
-  // Leaving editMode also force-closes it rather than just hiding the
-  // toggle button, so re-entering edit mode always starts from a known
-  // closed state instead of resuming whatever was open before.
-  if ((!editMode || hide) && matLabOpen) setMatLabOpen(false);
-  matLabPanel.style.visibility = hide ? "hidden" : "visible";
-}
-applyUIVisibility();
-
-window.SandEditor = {
-  setEditMode(on) {
-    editMode = !!on;
-    if (!editMode) { showGrid = false; gridCheckbox.checked = false; rectDragging = false; setActiveTool("paint"); }
-    applyUIVisibility();
-  },
-  setOverlaysVisible(on) {
-    overlaysVisible = !!on;
-    applyUIVisibility();
-  },
-  setUIHidden(on) {
-    uiHidden = !!on;
-    applyUIVisibility();
-  },
-  isEditMode: () => editMode,
-  isOverlaysVisible: () => overlaysVisible,
-  isUIHidden: () => uiHidden,
-};
+                      // square) for any carry
