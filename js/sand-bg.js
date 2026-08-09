@@ -350,7 +350,7 @@ const LEDGE_WIDTH_SCALE = 0.7;
 // taller than the visible ink (~52px box for ~35px glyph on phone), so
 // the effective raise in screen pixels is MULT × line-box-height. At 0.5
 // that's roughly one visible letter-height above the bottom edge.
-const LEDGE_RAISE_MULT = 0.8;
+const LEDGE_RAISE_MULT = 1.4;
 
 function applyDomColliders() {
   clearDomColliders();
