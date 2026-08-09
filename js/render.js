@@ -631,6 +631,14 @@ export function resetFlatSubchunkCache(){
 // dirty-rects path needs to know to keep a subchunk repainting even once
 // nothing in it is physically moving.
 // ---- transparent hole for the CSS rainbow-frame rings (js/frame.js) ----
+// CURRENTLY INERT: index.html's z-index reorder (see its own STACKING
+// ORDER comment) put the rings back ABOVE the sim. Once something opaque
+// sits on top in stacking order, what this canvas does underneath it —
+// transparent or not — has no visible effect; the rings simply paint
+// over it either way. Left in place rather than removed: it's already
+// tested and correct, and cheap insurance if "sand in front of the
+// rings" comes back as a goal once the underlying dirty-rects staleness
+// (the actual reason it got reverted) has a real fix.
 // The border used to be pure decoration painted ON TOP of the sim, so this
 // never mattered. Once the sim was moved to render IN FRONT of the frame
 // (so sand can visibly fall over it — index.html's z-index reorder), the

@@ -377,32 +377,54 @@ function clearFloorRow() {
   // rainbow frame. This check has to track that or a resize would fail
   // to recognize the existing floor as floor, leaving it stuck forever
   // instead of being torn down and rebuilt.
+  //   wake() takes the cell's OWN row (not FLOOR_Y) — the floor no longer
+  // lives at a fixed row (see FLOOR_RAISE_PX below), so assuming FLOOR_Y
+  // here would wake the wrong subchunk once the floor's actually raised.
   for (const i of floorCells) {
     if (grid[i] === VOIDSTONE) {
       grid[i] = EMPTY;
-      wake(i % W, FLOOR_Y);
+      wake(i % W, Math.floor(i / W));
     }
   }
   floorCells.clear();
 }
 
-// CORRECTION, this pass: the floor used to have three holes cut into it —
-// a narrow drain at each screen edge, plus a THIRD hole under the
-// wordmark sized to the whole <h1>'s bounding box. That box's width is
-// its widest LINE (flex-column stacking means the box is as wide as
-// "Electric Rainbow Company", not "The"), horizontally centered by
-// .stage — so that third hole was wide enough to eat most of the floor's
-// middle, leaving only two thin strips of material near the edges. That
-// read as "two ledges with a pit in the middle," which is backwards from
-// the intent: the floor should be something sand rests on, not something
-// it falls through everywhere except two slivers.
-//   Fully solid now, no holes of any kind. Real consequence, not a bug:
-// this removes the site's only drain. The 18 rainbow materials have no
-// decay (a comment elsewhere in this file claims they do; they don't —
-// checked directly against materials.js, not assumed), so a visitor who
-// paints past MAX_LIVE_SAND simply can't paint any more for the rest of
-// that page load. Accepted tradeoff of "completely solid," not something
-// this change tries to compensate for.
+// CORRECTION, this pass: sand rendering in front of the rainbow frame
+// (index.html's z-index reorder, two passes back) turned out unreliable
+// in practice — the border only ever showed up along whatever edge sand
+// happened to have recently touched, which traces to the dirty-rects
+// render path only repainting a subchunk when something wakes it; a
+// static, never-touched void band has no reason to ever get re-examined
+// after its first paint. Rather than keep chasing that, the frame went
+// back to painting ON TOP of the sim (index.html z-index swap, same
+// turn as this comment), which makes the border unconditionally visible
+// regardless of canvas/paint-order edge cases.
+//   That brings back the ORIGINAL problem this whole detour was solving:
+// anything sitting in the border band is hidden under the now-opaque
+// rings again. FLOOR_RAISE_PX is the fix for the bottom edge specifically
+// — lifting the floor's actual row clear of the ring band's screen depth
+// means a sand pile's visible top surface pokes up into the open
+// interior (never covered by rings, which only occupy the inset border
+// strip) instead of building up invisibly behind the bottom band.
+//   REAL LIMITATION, not fixed by this: this only helps the BOTTOM edge.
+// Sand piled directly against the LEFT or RIGHT screen edge still tucks
+// under the rings there, same as before the whole detour started — this
+// site's brush-based, centered painting makes that an unlikely case in
+// practice, but it's a real gap, not something this change papers over.
+//   In world-cell rows, not a fixed number — CELL_PX (screen px per
+// world cell) changes with the grain slider and with responsiveCellPx's
+// device-based default, so a fixed row count would put the floor at a
+// different SCREEN height on every device/setting. Deriving it from a
+// real px target divides out that variability the same way every other
+// screen-space-to-world-cell conversion in this file already does.
+//   Still true, unrelated to any of the above: the floor is fully solid
+// with no holes of any kind — there is no drain. The 18 rainbow
+// materials have no decay, so a visitor who paints past MAX_LIVE_SAND
+// simply can't paint any more until reload. See js/sand-bg.js's
+// triggerSandReset (the drain button) for the actual way this site
+// recovers from that, since it isn't this function's job to.
+const FLOOR_RAISE_PX = 32;
+
 function buildFloor() {
   if (usingInitialGrid) return;
   clearFloorRow();
@@ -413,12 +435,13 @@ function buildFloor() {
   // coords inside it), so it's safe to only build floor within it.
   const viewLeft = Math.floor(camera.x);
   const viewRight = Math.ceil(camera.x + VIEW_W * camera.scale);
+  const floorRow = FLOOR_Y - Math.round(FLOOR_RAISE_PX / CELL_PX);
 
   for (let x = viewLeft; x < viewRight; x++) {
-    const i = idx(x, FLOOR_Y);
+    const i = idx(x, floorRow);
     grid[i] = VOIDSTONE;
     floorCells.add(i);
-    wake(x, FLOOR_Y);
+    wake(x, floorRow);
   }
 }
 
@@ -430,6 +453,9 @@ function applySiteLayout() {
 }
 
 // ---- transparent hole for the CSS rainbow-frame rings (js/render.js) ----
+// CURRENTLY INERT — see render.js's matching comment on setVoidHoleInsetCells.
+// Still computed and passed through every layout pass; just has nothing
+// left to visibly affect now that the rings paint above the sim again.
 // js/frame.js builds the ring stack and exposes its real total depth as
 // window.RainbowFrame.totalWidthVmin — read that directly rather than
 // re-deriving it from --band/--sep/PASSES/PASS_SCALE here, since this

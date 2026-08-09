@@ -87,21 +87,29 @@
   }
 
   /* ---------- STACKING ORDER ----------
-     Reordered so the sand simulation paints IN FRONT of the rainbow
-     frame. This is what makes the extra infinity-mirror passes read as
-     reflections sitting behind glass rather than as a merely thicker
-     border — sand pours over the top of them.
-       Note the consequence, since it is easy to miss: the deep passes
-     extend inward past the physics boundary, so they occupy screen area
-     the sand can actually fall through. That is the intended effect, not
-     an overlap bug.
-       The wordmark was lifted above the sim (was z-index 2) to keep it
-     legible now that sand renders higher than it used to. If you would
-     rather have sand bury the wordmark as it accumulates, set .stage
-     back to 2 — that is the whole change, nothing else depends on it.
+     REVERTED, this pass: the sim briefly rendered IN FRONT of the
+     rainbow frame (border transparent-punched to show through empty
+     canvas pixels), so sand would visibly pour over the rings. In
+     practice that turned out unreliable — the dirty-rects render path
+     only repaints a subchunk when something wakes it, so a static,
+     never-touched void band had no reason to ever get re-examined after
+     its first paint, and the border ended up only showing along
+     whatever edge sand had recently touched. Rather than keep chasing
+     that, the rings are back on top: unconditionally visible regardless
+     of canvas paint-order edge cases, at the cost of the original
+     problem this was solving — anything sitting in the border band is
+     hidden under the now-opaque rings again. sand-bg.js's
+     FLOOR_RAISE_PX addresses the bottom edge specifically, lifting the
+     floor clear of the ring band's screen depth; left/right are an
+     accepted, unaddressed gap (see that constant's own comment).
+       The wordmark stays at z-index 9 rather than reverting to its old
+     value of 2 — that was never actually ABOUT the sand-in-front
+     experiment, it just happened to land in the same pass. 9 keeps it
+     comfortably above the sim regardless of which side of the rings the
+     sim is on; no reason to move it back.
 
-       0  (unused)          5  rainbow frame rings
-       8  sand sim          9  wordmark
+       0  (unused)          5  sand sim
+       8  rainbow frame rings 9  wordmark
       10  carry overlay    11  carry glow
       12  contact link     13  material palette                        */
 
@@ -114,7 +122,7 @@
     position: fixed;
     inset: 0;
     overflow: hidden;
-    z-index: 8;
+    z-index: 5;
   }
 
   #box {
@@ -161,7 +169,7 @@
   .ring {
     position: fixed;
     pointer-events: none;
-    z-index: 5;
+    z-index: 8;
     will-change: transform;
     transform: translate(
       calc(var(--tilt-x) * var(--tilt-depth) * var(--d)),
