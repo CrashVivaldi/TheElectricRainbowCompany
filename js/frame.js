@@ -41,7 +41,7 @@
   // composited fixed-position elements, so this is not free at large
   // values, but at 2 it is 18 transform-only layers and unmeasurable in
   // practice.
-  const PASSES = 2;
+  const PASSES = 1;
 
   // Gap between passes uses `sep` directly (read from --sep in CSS below)
   // rather than a separate constant — that makes the purple-to-red
