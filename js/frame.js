@@ -47,28 +47,34 @@
   // is drawn here, it's pure spacing. Without this, pass 2 starts exactly
   // where pass 1's last ring ends, which reads as one crowded stripe stack
   // rather than two distinct, separately-legible reflections at different
-  // depths. This is the knob for "further apart," not PASS_SCALE — that one
-  // controls how much each pass COMPRESSES relative to the last, not how
-  // much space sits between them.
-  const PASS_GAP_VMIN = 1.4;
+  // depths. This is the knob for "further apart" between passes, not
+  // PASS_SCALE — that controls how much each pass COMPRESSES relative to
+  // the last, not how much space sits between them.
+  const PASS_GAP_VMIN = 0.5;
 
-  // Each pass's ring thicknesses, as a fraction of the previous pass. This is
-  // the single most important number for whether the effect reads as DEPTH
-  // versus as a striped border, and it wants to be aggressive: real
-  // reflections compress hard toward the vanishing point. Values near 1
-  // produce evenly-spaced stripes that look flat no matter how much parallax
-  // is applied on top.
+  // Each pass's COLORED ring thicknesses, as a fraction of the previous
+  // pass. Wants to be aggressive: real reflections compress hard toward
+  // the vanishing point. Values near 1 produce evenly-spaced stripes that
+  // look flat no matter how much parallax is applied on top.
   const PASS_SCALE = 0.45;
 
-  // Each pass's brightness, as a fraction of the previous. Compounds, so at
-  // 0.55 two passes land at 100% / 55%.
+  // Separator (black spacer between colored rings) scale per pass —
+  // deliberately GREATER THAN 1 so the gaps between rings within pass 2
+  // are wider than in pass 1, making the inner reflection read as more
+  // open and spacious rather than a compressed version of the outer one.
+  // (PASS_SCALE < 1 compresses colored rings inward; SEP_PASS_SCALE > 1
+  // pushes separator spacing outward — the two act in opposite directions
+  // on their respective ring types.)
+  const SEP_PASS_SCALE = 1.3;
+
+  // Each pass's brightness, as a fraction of the previous. Compounds, so
+  // at 0.72 two passes land at 100% / 72%.
   //   Applied by mixing the ring color toward --void rather than by setting
   // opacity. Opacity would let whatever is behind the border show through
-  // the rings, which would mean the deep passes get tinted by whatever's
-  // rendering underneath in a way that shifts as the sim moves. Mixing
-  // toward the void color is stable, and it is also what a dimmer
-  // reflection physically is: less light, not partial transparency.
-  const PASS_DIM = 0.55;
+  // the rings in a way that shifts as the sim moves. Mixing toward the
+  // void color is stable, and it is also what a dimmer reflection
+  // physically is: less light, not partial transparency.
+  const PASS_DIM = 0.72;
 
   // Minimum thickness any ring is allowed to have, in vmin. This exists
   // because PASS_SCALE compounds and vmin is small: a compressed second-pass
@@ -77,18 +83,11 @@
   // at all, depending on how the device rounds it, and that pass effectively
   // disappears on real hardware.
   //   0.25vmin is about 1 device pixel on a typical phone, which is the
-  // narrowest a line can be and still be reliably drawn. Left unchanged even
-  // as --band/--sep got thinner this pass — it's a hardware floor, not a
-  // proportion of the base thickness, so it doesn't scale down with them.
-  // Real consequence: pass 2's colored rings may render at close to the same
-  // physical thickness as pass 1's rather than visibly thinner, since both
-  // now sit near this floor. What still reads as "thinner and further back"
-  // is the gap and the dimming, not the stroke weight.
-  //   The tradeoff, stated plainly: floored rings stop compressing in
-  // THICKNESS while continuing to compress in SPACING. That is a real
-  // departure from strict perspective, but it is the right one — the eye
-  // reads depth from the spacing rhythm far more than from line weight, and
-  // a correctly-scaled invisible line communicates nothing at all.
+  // narrowest a line can be and still be reliably drawn.
+  //   For transparent separators (pass 2+) this floor still applies to the
+  // offset accumulation — the spacing the sep contributes to the layout —
+  // even though nothing visible is drawn there. That's correct: you still
+  // want minimum spacing between rings even when the gap itself is clear.
   const MIN_THICKNESS_VMIN = 0.25;
 
   // Exponent on the normalized ring index when computing parallax depth.
@@ -205,23 +204,30 @@
       // it.
       if (p > 0) offset += PASS_GAP_VMIN;
 
-      const scale = Math.pow(PASS_SCALE, p);
-      const brightness = Math.pow(PASS_DIM, p);
-
       for (let i = 0; i < SEQUENCE.length; i++) {
         const entry = SEQUENCE[i];
+        // Colored rings compress by PASS_SCALE; separators compress by the
+        // less-aggressive SEP_PASS_SCALE so the rings within deeper passes
+        // read as further apart rather than as a tighter version of pass 1.
+        const rawScale = entry.kind === "color" ? Math.pow(PASS_SCALE, p) : Math.pow(SEP_PASS_SCALE, p);
         const thickness = Math.max(
-          (entry.kind === "color" ? band : sep) * scale,
+          (entry.kind === "color" ? band : sep) * rawScale,
           MIN_THICKNESS_VMIN
         );
         rings.push({
           pass: p,
           kind: entry.kind,
-          // Separators stay pure black at every depth. They are structural —
-          // they are what separates one colored band from the next — and a
-          // "dimmer black" is just black. Mixing them toward void would
-          // actually LIGHTEN them slightly, since --void isn't pure black.
-          color: entry.kind === "color" ? dim(entry.color, brightness) : "#000000",
+          // Pass 0 separators: opaque black — they define the structure of
+          // the outermost, physical-feeling frame, and black is what reads
+          // as a hard edge between colored bands.
+          // Pass 1+ separators: transparent — the gap between rings in the
+          // inner reflection doesn't need to be ink-black, just space. The
+          // void background shows through at nearly the same near-black
+          // color anyway, and leaving it clear makes the inner rings feel
+          // lighter and more receding rather than a second solid-edged frame.
+          color: entry.kind === "color"
+            ? dim(entry.color, Math.pow(PASS_DIM, p))
+            : p === 0 ? "#000000" : "transparent",
           offset: offset,
           thickness: thickness,
         });
