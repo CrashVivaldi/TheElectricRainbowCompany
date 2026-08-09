@@ -22,8 +22,23 @@
     --c-green:  #3DBF5F;
     --c-blue:   #2E86F5;
     --c-purple: #9B4FE0;
-    --band: 0.7vmin;
-    --sep:  0.805vmin;
+
+    /* Retuned: colored bands halved (0.7 -> 0.35), black separators
+       thickened to compensate (0.805 -> 1.2425). 5*0.35 + 4*1.2425 =
+       6.72vmin — byte-for-byte the same total width as before, which is
+       not a coincidence and is not optional:
+         sand-bg.js's rainbowFrameInsetPx() reconstructs the physics
+       boundary as literally 5*band + 4*sep. It does not read
+       --frame-inset and knows nothing about repetitions. Keeping that
+       sum at 6.72vmin is what lets the whole multi-pass infinity mirror
+       ship with ZERO changes to sand-bg.js — the floor drain, the DOM
+       colliders, the palette groups and the contact link all still land
+       exactly where they did.
+         Change these two numbers freely, but change them TOGETHER so the
+       sum holds, or the invisible physics edge drifts away from the
+       visible one and sand starts piling against nothing. */
+    --band: 0.35vmin;
+    --sep:  1.2425vmin;
     --radius: 8vmin;
     --frame-inset: calc(5 * var(--band) + 4 * var(--sep));
 
@@ -33,50 +48,27 @@
        with a 0 fallback so the border renders correctly at rest even if
        tilt.js fails to load, is blocked, or the visitor has reduced
        motion on — in every one of those cases every translate() below
-       evaluates to 0 and the frame is pixel-identical to the old
-       single-element version. */
+       evaluates to 0 and the frame paints as a plain static border. */
     --tilt-x: 0;
     --tilt-y: 0;
 
-    /* Maximum displacement of the DEEPEST (innermost, purple) ring at
-       full tilt. Every other ring is a fraction of this, per --ring-N-d
-       below. This is the single knob that controls how strong the whole
-       effect reads — start here when tuning.
+    /* Maximum displacement of the DEEPEST ring at full tilt. Every other
+       ring is a fraction of this, set per-element by frame.js. This is
+       the single knob controlling how strong the effect reads — start
+       here when tuning.
          NEGATIVE VALUES ARE VALID and flip the apparent depth direction:
-       positive makes the rings read as receding INTO the screen (a well),
-       negative makes them read as protruding OUT of it (a lens). Which
-       one "looks right" is genuinely a matter of taste and of which way
-       your brain resolves the ambiguity, so try both before deciding. */
+       positive makes the rings recede INTO the screen (a well), negative
+       makes them protrude OUT of it (a lens). Which reads as "correct"
+       is genuinely ambiguous and a matter of taste — try both. */
     --tilt-depth: 10px;
 
-    /* How much the deepest ring dims relative to the outermost, mimicking
-       a real infinity mirror losing energy on each bounce. 0 disables the
-       fade entirely and restores the exact current on-screen appearance
-       of the border at rest. Applied only to the COLORED rings — see the
-       note in the ring block below for why the black separators are
-       deliberately left opaque. */
-    --ring-fade: 0.22;
-
-    /* Per-ring depth fraction, 0 (outermost, pinned) to 1 (innermost,
-       moves the full --tilt-depth). Deliberately NOT linear: the spacing
-       accelerates inward, which is what makes the rings read as a
-       receding corridor rather than a stack of cards sliding past each
-       other at even intervals. Real reflections in an infinity mirror
-       compress toward the vanishing point; even spacing looks like a
-       parallax effect, uneven spacing looks like depth.
-         The outermost ring is pinned at exactly 0 on purpose. It is the
-       physical bezel of the frame, and it is also flush with the screen
-       edge — displacing it at all would swing it off the viewport and
-       open a sliver of bare --void along one side on every tilt. */
-    --ring-0-d: 0;
-    --ring-1-d: 0.02;
-    --ring-2-d: 0.06;
-    --ring-3-d: 0.12;
-    --ring-4-d: 0.20;
-    --ring-5-d: 0.32;
-    --ring-6-d: 0.48;
-    --ring-7-d: 0.70;
-    --ring-8-d: 1;
+    /* Extra per-ring dimming ON TOP OF the per-pass darkening frame.js
+       already applies. Deliberately mild by default: PASS_DIM in
+       frame.js does the heavy lifting of making each repetition read as
+       further away, and this is only here to keep the gradient smooth
+       WITHIN a pass rather than stepping at pass boundaries. 0 disables
+       it. Applies only to colored rings, never separators. */
+    --ring-fade: 0.15;
   }
 
   * { box-sizing: border-box; }
@@ -94,6 +86,25 @@
     position: relative;
   }
 
+  /* ---------- STACKING ORDER ----------
+     Reordered so the sand simulation paints IN FRONT of the rainbow
+     frame. This is what makes the extra infinity-mirror passes read as
+     reflections sitting behind glass rather than as a merely thicker
+     border — sand pours over the top of them.
+       Note the consequence, since it is easy to miss: the deep passes
+     extend inward past the physics boundary, so they occupy screen area
+     the sand can actually fall through. That is the intended effect, not
+     an overlap bug.
+       The wordmark was lifted above the sim (was z-index 2) to keep it
+     legible now that sand renders higher than it used to. If you would
+     rather have sand bury the wordmark as it accumulates, set .stage
+     back to 2 — that is the whole change, nothing else depends on it.
+
+       0  (unused)          5  rainbow frame rings
+       8  sand sim          9  wordmark
+      10  carry overlay    11  carry glow
+      12  contact link     13  material palette                        */
+
   /* ---------- The sim, full screen ---------- */
   /* Fixed, cropped viewport wrapper — #box is sized in JS (sand-bg.js's
      resizeBox) to "cover" the window at the sim's real 150:192 pixel
@@ -103,7 +114,7 @@
     position: fixed;
     inset: 0;
     overflow: hidden;
-    z-index: 0;
+    z-index: 8;
   }
 
   #box {
@@ -131,140 +142,43 @@
 
   /* ---------- Rainbow border frame ----------
      Concentric rings, red outside -> black separator -> yellow -> black
-     -> green -> black -> blue -> black -> purple inside. Same colors,
-     same thicknesses, same corner treatment as always.
+     -> green -> black -> blue -> black -> purple inside, that whole
+     sequence repeated PASSES times (js/frame.js), each repetition
+     thinner and darker than the last.
 
-     WHY NINE ELEMENTS INSTEAD OF ONE: this used to be a single fixed div
-     carrying nine stacked inset box-shadows of monotonically increasing
-     spread. That is a genuinely tidier way to paint a static frame, and
-     it is the version that shipped for months. It has exactly one
-     limitation, and it turned out to be the one that mattered: a
-     box-shadow is not an element, so individual rings cannot be
-     transformed independently. The infinity-mirror effect is entirely
-     built out of moving each ring by a different amount, so the shadows
-     had to become real elements. If the tilt effect is ever removed,
-     collapsing this back into the old single-element rule is a clean
-     revert — nothing else in the codebase depends on the split.
+     THE RING ELEMENTS ARE GENERATED, NOT AUTHORED. This used to be nine
+     hand-written divs with nine hand-written CSS rules. At twenty-seven
+     that stops being maintainable, and the count is a tuning constant
+     that should be changeable without editing markup — so .rainbow-frame
+     ships empty and frame.js fills it, setting each ring's inset,
+     border-radius, thickness, color and depth fraction inline. What
+     stays here is only what is genuinely shared across every ring.
 
-     WHAT HAD TO BE RECOMPUTED BY HAND: the old version got concentric
-     corners for free, because box-shadow spread on a rounded rect
-     automatically shrinks the inner radius as it moves inward. Nine
-     separate elements get no such favor, so each ring's radius is
-     explicitly its own inset subtracted from the outer --radius. That
-     keeps every corner truly concentric instead of nine identical
-     rounded rects nested inside each other, which reads as visibly wrong
-     at the corners even though the straight edges look fine. This is the
-     detail most likely to drift if --band/--sep/--radius are retuned —
-     the offsets below are all calc()-derived, so they follow
-     automatically, but it is worth an eyeball at the corners after any
-     change to those three variables.
-       One bound worth knowing: at the current values the innermost ring's
-     radius works out to 1.28vmin, comfortably positive. If --radius is
-     ever reduced below the total frame inset (6.72vmin), inner radii go
-     negative and the browser silently clamps them to 0, squaring off the
-     inner corners while the outer ones stay round.
-
-     PHYSICS/LAYOUT CONTRACT UNCHANGED: sand-bg.js's rainbowFrameInsetPx()
-     (colliders, floor-drain padding) and --frame-inset (palette and
-     contact-link positioning) both derive from --band/--sep, which are
-     untouched. The nine ring insets sum to exactly 5*band + 4*sep, which
-     is --frame-inset itself, so the invisible physics boundary and the
-     visible inner edge still agree to the pixel. Only the painting
-     changed, not the geometry.
-
-     NOTE ON THE TILT TRANSFORMS: translate() on a position:fixed element
-     moves it in real screen pixels, independent of the vmin-based sizing
-     — which is what we want here. --tilt-depth is therefore an absolute
-     px value and does not scale with viewport size the way the ring
-     thicknesses do. That is deliberate: the effect should feel like the
-     same physical amount of movement on a phone and on a desktop
-     monitor, not proportionally larger on a big screen. */
+     WHY NOT box-shadow ON ONE ELEMENT, as this used to be: a box-shadow
+     is not an element, so individual rings cannot be transformed
+     independently, and the entire infinity-mirror effect is built out of
+     moving each ring by a different amount. */
   .ring {
     position: fixed;
     pointer-events: none;
     z-index: 5;
     will-change: transform;
-  }
-
-  /* Colored rings dim with depth. The black separators deliberately do
-     NOT: they are structural, not reflective — they are what makes each
-     colored band read as a distinct ring rather than a gradient. Fading
-     them toward transparent would let the sand sim show through the gaps
-     and muddy the whole frame, which is the opposite of the crisp
-     concentric look the border exists for. Dark stays dark at depth
-     anyway, so there is nothing physical being fudged here. */
-  .ring-color { opacity: calc(1 - var(--ring-fade) * var(--d)); }
-
-  .ring-0 {
-    --d: var(--ring-0-d);
-    inset: 0;
-    border-radius: var(--radius);
-    box-shadow: inset 0 0 0 var(--band) var(--c-red);
-  }
-  .ring-1 {
-    --d: var(--ring-1-d);
-    inset: var(--band);
-    border-radius: calc(var(--radius) - var(--band));
-    box-shadow: inset 0 0 0 var(--sep) black;
-  }
-  .ring-2 {
-    --d: var(--ring-2-d);
-    inset: calc(var(--band) + var(--sep));
-    border-radius: calc(var(--radius) - var(--band) - var(--sep));
-    box-shadow: inset 0 0 0 var(--band) var(--c-yellow);
-  }
-  .ring-3 {
-    --d: var(--ring-3-d);
-    inset: calc(var(--band)*2 + var(--sep));
-    border-radius: calc(var(--radius) - var(--band)*2 - var(--sep));
-    box-shadow: inset 0 0 0 var(--sep) black;
-  }
-  .ring-4 {
-    --d: var(--ring-4-d);
-    inset: calc(var(--band)*2 + var(--sep)*2);
-    border-radius: calc(var(--radius) - var(--band)*2 - var(--sep)*2);
-    box-shadow: inset 0 0 0 var(--band) var(--c-green);
-  }
-  .ring-5 {
-    --d: var(--ring-5-d);
-    inset: calc(var(--band)*3 + var(--sep)*2);
-    border-radius: calc(var(--radius) - var(--band)*3 - var(--sep)*2);
-    box-shadow: inset 0 0 0 var(--sep) black;
-  }
-  .ring-6 {
-    --d: var(--ring-6-d);
-    inset: calc(var(--band)*3 + var(--sep)*3);
-    border-radius: calc(var(--radius) - var(--band)*3 - var(--sep)*3);
-    box-shadow: inset 0 0 0 var(--band) var(--c-blue);
-  }
-  .ring-7 {
-    --d: var(--ring-7-d);
-    inset: calc(var(--band)*4 + var(--sep)*3);
-    border-radius: calc(var(--radius) - var(--band)*4 - var(--sep)*3);
-    box-shadow: inset 0 0 0 var(--sep) black;
-  }
-  .ring-8 {
-    --d: var(--ring-8-d);
-    inset: calc(var(--band)*4 + var(--sep)*4);
-    border-radius: calc(var(--radius) - var(--band)*4 - var(--sep)*4);
-    box-shadow: inset 0 0 0 var(--band) var(--c-purple);
-  }
-
-  /* One rule drives all nine. Each ring reads its own --d, set in its
-     own class above, so the displacement math lives in exactly one
-     place rather than being repeated nine times with nine chances to
-     typo a multiplier. */
-  .ring {
     transform: translate(
       calc(var(--tilt-x) * var(--tilt-depth) * var(--d)),
       calc(var(--tilt-y) * var(--tilt-depth) * var(--d))
     );
   }
 
-  /* tilt.js already pins --tilt-x/--tilt-y to 0 and never starts its
-     animation frame loop under reduced motion, so this is belt-and-
-     braces for the case where the vars are being driven by something
-     else, or a future consumer sets them directly. Costs nothing. */
+  /* Colored rings take the extra within-pass dimming. The black
+     separators deliberately do not: they are structural — they are what
+     makes each colored band read as a distinct ring rather than a
+     gradient — and a dimmer black is just black. */
+  .ring-color { opacity: calc(1 - var(--ring-fade) * var(--d)); }
+
+  /* frame.js already sets every --d, and tilt.js pins --tilt-x/--tilt-y
+     to 0 and never starts its frame loop under reduced motion, so this
+     is belt-and-braces for the case where those vars get driven by
+     something else later. Costs nothing. */
   @media (prefers-reduced-motion: reduce) {
     .ring { transform: none !important; }
   }
@@ -282,7 +196,7 @@
   #carryOverlay {
     position: fixed;
     inset: 0;
-    z-index: 6;
+    z-index: 10;
     pointer-events: none;
     image-rendering: pixelated;
   }
@@ -303,7 +217,7 @@
   #carryGlow {
     position: fixed;
     inset: 0;
-    z-index: 7;
+    z-index: 11;
     pointer-events: none;
     image-rendering: pixelated;
     filter: blur(5px) saturate(1.6) brightness(130%);
@@ -315,7 +229,7 @@
   .stage {
     position: fixed;
     inset: 0;
-    z-index: 2;
+    z-index: 9;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -413,10 +327,12 @@
   .page-nav a:hover { opacity: 1; }
 
   /* ---------- Material palette (sand-bg.js) ----------
-     Three groups inset inside the rainbow frame's inner purple edge. */
+     Three groups inset inside the rainbow frame's inner purple edge.
+     Kept at the top of the stack so the swatches stay clickable now that
+     the sim paints above the frame. */
   .palette-group {
     position: fixed;
-    z-index: 10;
+    z-index: 13;
     display: flex;
     gap: 8px;
     pointer-events: none;
@@ -469,35 +385,25 @@
     </h1>
   </div>
 
-  <!-- Rainbow frame: one element per ring, outermost first. The wrapper
-       carries the old .rainbow-frame class so anything that ever queried
-       for it still finds a node in the same place in the stacking order,
-       but it paints nothing itself — every visible pixel comes from the
-       nine .ring children. -->
-  <div class="rainbow-frame">
-    <div class="ring ring-color ring-0"></div>
-    <div class="ring ring-1"></div>
-    <div class="ring ring-color ring-2"></div>
-    <div class="ring ring-3"></div>
-    <div class="ring ring-color ring-4"></div>
-    <div class="ring ring-5"></div>
-    <div class="ring ring-color ring-6"></div>
-    <div class="ring ring-7"></div>
-    <div class="ring ring-color ring-8"></div>
-  </div>
+  <!-- Intentionally empty: js/frame.js populates this with the full ring
+       stack at load. The wrapper itself paints nothing and keeps the
+       .rainbow-frame class so anything that ever queried for it still
+       finds a node in the same place in the document. -->
+  <div class="rainbow-frame"></div>
 
   <a class="contact-link" href="mailto:theelectricrainbowcompany@proton.me">contact</a>
 
   <canvas id="carryOverlay"></canvas>
   <canvas id="carryGlow"></canvas>
 
-  <!-- Plain classic script, not a module: it has no imports, nothing
-       imports it, and it publishes its output as CSS custom properties
-       rather than as an export. Loading it before sand-bg.js means the
-       tilt vars are already live by the time the sim starts painting,
-       though nothing actually breaks if it loads late — the vars have
-       0 fallbacks declared in :root. -->
+  <!-- Both plain classic scripts, not modules: neither has imports,
+       nothing imports them, and they communicate with the page through
+       CSS custom properties and the DOM rather than through exports.
+       Order matters only in that frame.js reads --band/--sep/--radius
+       and the ring colors off :root, which are static and already
+       parsed by the time either runs. -->
   <script src="./js/tilt.js"></script>
+  <script src="./js/frame.js"></script>
   <script type="module" src="./js/sand-bg.js"></script>
 
 </body>
