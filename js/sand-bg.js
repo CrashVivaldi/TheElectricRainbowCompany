@@ -343,14 +343,14 @@ const COLLIDER_LEDGE_THICKNESS = 1;
 // visibly fall through at typical grain sizes. Shrinking each ledge toward
 // the letter's center opens those gaps up without changing the markup or
 // the letter spacing itself. 1.0 = full bounding-box width (old behavior).
-const LEDGE_WIDTH_SCALE = 0.5;
+const LEDGE_WIDTH_SCALE = 0.3;
 
 // Ledges sit above the letters rather than flush with them — this is how
 // many multiples of the LETTER'S OWN HEIGHT the ledge is lifted above its
 // top edge, so sand collects visibly above the wordmark instead of resting
 // directly on it. Scales with font size automatically since it's relative
 // to each element's own measured height, not a fixed pixel/vmin offset.
-const LEDGE_RAISE_MULT = 1.4;
+const LEDGE_RAISE_MULT = 1;
 
 function applyDomColliders() {
   clearDomColliders();
@@ -627,6 +627,12 @@ function positionDrainButton() {
 // pixel at this zoom level. Scaling it keeps the touch feel consistent.
 const BRUSH_R = 4;
 function paintAt(wx, wy) {
+  // No new sand while a reset is draining/paused/respawning — resetInProgress
+  // stays true through exactly that window (set at button-press, cleared
+  // right after applyDomColliders() rebuilds the ledges in triggerSandReset
+  // above), so this reopens the instant the ledges are actually back rather
+  // than waiting out the separate button cooldown on top of that.
+  if (resetInProgress) return;
   for (let dy = -BRUSH_R; dy <= BRUSH_R; dy++) {
     for (let dx = -BRUSH_R; dx <= BRUSH_R; dx++) {
       if (dx * dx + dy * dy <= BRUSH_R * BRUSH_R) placeMaterial(wx + dx, wy + dy);
@@ -935,6 +941,20 @@ function beginCarry(anchorWX, anchorWY, clientX, clientY) {
 
 function dropCarry() {
   if (!carrying) return;
+  // Same reset-window guard as paintAt — a mid-reset drop would either get
+  // wiped a moment later by the drain's own grid.fill(EMPTY), or, worse,
+  // land in the brief window between that wipe and buildFloor()/
+  // applyDomColliders() finishing, which is exactly the state this feature
+  // exists to prevent visitors from painting into. Simplest correct fix is
+  // just not letting the drop happen at all — the carried clump is
+  // discarded rather than silently lost mid-air, matching how paintAt
+  // already treats a rejected placement.
+  if (resetInProgress) {
+    carrying = false;
+    carriedCells = [];
+    carryCtx.clearRect(0, 0, carryCanvas.width, carryCanvas.height);
+    return;
+  }
   const [dropWX, dropWY] = screenToCell(carryPointerX, carryPointerY);
   for (const cell of carriedCells) {
     const tx = dropWX + cell.dx, ty = dropWY + cell.dy;
