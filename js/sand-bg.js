@@ -336,6 +336,22 @@ function purgeVoidstoneInFloorZone() {
 // world-space) — stays a small, thin strip regardless of grain size.
 const COLLIDER_LEDGE_THICKNESS = 1;
 
+// Each letter's ledge is narrower than the letter's own bounding box,
+// centered within it. Per-letter bounding boxes (from getBoundingClientRect
+// on individual letter spans) include the font's side-bearing, which at
+// full width leaves gaps between adjacent letters too narrow for sand to
+// visibly fall through at typical grain sizes. Shrinking each ledge toward
+// the letter's center opens those gaps up without changing the markup or
+// the letter spacing itself. 1.0 = full bounding-box width (old behavior).
+const LEDGE_WIDTH_SCALE = 0.5;
+
+// Ledges sit above the letters rather than flush with them — this is how
+// many multiples of the LETTER'S OWN HEIGHT the ledge is lifted above its
+// top edge, so sand collects visibly above the wordmark instead of resting
+// directly on it. Scales with font size automatically since it's relative
+// to each element's own measured height, not a fixed pixel/vmin offset.
+const LEDGE_RAISE_MULT = 1.4;
+
 function applyDomColliders() {
   clearDomColliders();
   purgeVoidstoneInFloorZone();
@@ -346,14 +362,18 @@ function applyDomColliders() {
     return Math.ceil(camera.y + (screenY - rect0.top) / rect0.height * VIEW_H * camera.scale);
   }
 
-  function placeLedge(wx0, wx1, wyTop) {
-    // Ledge sits AT the top edge of the element, so sand rests on top of
-    // the letter rather than collecting beneath it. wyTop is the world row
-    // of the element's top bounding edge; the ledge occupies wyTop through
-    // wyTop + COLLIDER_LEDGE_THICKNESS (downward in world space).
-    const wy1 = wyTop + COLLIDER_LEDGE_THICKNESS;
-    if (wyTop >= FLOOR_LEDGE_ZONE_TOP) return;
-    for (let y = wyTop; y < wy1; y++) {
+  function placeLedge(wx0, wx1, wyAnchor) {
+    // Bottom-anchored: wyAnchor is the row immediately BELOW the ledge
+    // (exclusive) — the ledge occupies [wyAnchor - thickness, wyAnchor),
+    // growing upward from that row. This is deliberate rather than
+    // top-anchored (growing downward from a fixed top row): the caller
+    // computes wyAnchor as a RAISED position above the letter, and a
+    // bottom anchor means COLLIDER_LEDGE_THICKNESS changes don't shift
+    // where the raise lands relative to the letter — only how thick the
+    // ledge reads.
+    const wy0 = wyAnchor - COLLIDER_LEDGE_THICKNESS;
+    if (wy0 >= FLOOR_LEDGE_ZONE_TOP) return;
+    for (let y = wy0; y < wyAnchor; y++) {
       for (let x = wx0; x < wx1; x++) {
         if (x < 0 || x >= W || y < 0 || y >= H) continue;
         const i = idx(x, y);
@@ -367,9 +387,24 @@ function applyDomColliders() {
 
   for (const el of els) {
     const r = el.getBoundingClientRect();
-    const wx0 = Math.floor(camera.x + (r.left - rect0.left) / rect0.width * VIEW_W * camera.scale);
-    const wx1 = Math.ceil(camera.x + (r.right - rect0.left) / rect0.width * VIEW_W * camera.scale);
-    placeLedge(wx0, wx1, screenYToWorldRow(r.top));
+    let wx0 = Math.floor(camera.x + (r.left - rect0.left) / rect0.width * VIEW_W * camera.scale);
+    let wx1 = Math.ceil(camera.x + (r.right - rect0.left) / rect0.width * VIEW_W * camera.scale);
+
+    // Shrink toward center — see LEDGE_WIDTH_SCALE above for why.
+    const fullWidth = wx1 - wx0;
+    const narrowWidth = Math.max(1, Math.round(fullWidth * LEDGE_WIDTH_SCALE));
+    const center = (wx0 + wx1) / 2;
+    wx0 = Math.floor(center - narrowWidth / 2);
+    wx1 = wx0 + narrowWidth;
+
+    // Letter height in world cells, using the same screen->world scale
+    // factor as the x/y conversions but as a pure delta (no camera offset,
+    // since it's a span not a position).
+    const worldHeight = r.height / rect0.height * VIEW_H * camera.scale;
+    const raise = Math.round(worldHeight * LEDGE_RAISE_MULT);
+
+    const wyAnchor = screenYToWorldRow(r.top) - raise;
+    placeLedge(wx0, wx1, wyAnchor);
   }
 }
 
