@@ -346,11 +346,14 @@ function applyDomColliders() {
     return Math.ceil(camera.y + (screenY - rect0.top) / rect0.height * VIEW_H * camera.scale);
   }
 
-  function placeLedge(wx0, wx1, wyBottom) {
-    const wy0 = wyBottom - COLLIDER_LEDGE_THICKNESS;
-    // Word shelves only — never recreate the old bottom-border footing.
-    if (wy0 >= FLOOR_LEDGE_ZONE_TOP) return;
-    for (let y = wy0; y < wyBottom; y++) {
+  function placeLedge(wx0, wx1, wyTop) {
+    // Ledge sits AT the top edge of the element, so sand rests on top of
+    // the letter rather than collecting beneath it. wyTop is the world row
+    // of the element's top bounding edge; the ledge occupies wyTop through
+    // wyTop + COLLIDER_LEDGE_THICKNESS (downward in world space).
+    const wy1 = wyTop + COLLIDER_LEDGE_THICKNESS;
+    if (wyTop >= FLOOR_LEDGE_ZONE_TOP) return;
+    for (let y = wyTop; y < wy1; y++) {
       for (let x = wx0; x < wx1; x++) {
         if (x < 0 || x >= W || y < 0 || y >= H) continue;
         const i = idx(x, y);
@@ -366,7 +369,7 @@ function applyDomColliders() {
     const r = el.getBoundingClientRect();
     const wx0 = Math.floor(camera.x + (r.left - rect0.left) / rect0.width * VIEW_W * camera.scale);
     const wx1 = Math.ceil(camera.x + (r.right - rect0.left) / rect0.width * VIEW_W * camera.scale);
-    placeLedge(wx0, wx1, screenYToWorldRow(r.bottom));
+    placeLedge(wx0, wx1, screenYToWorldRow(r.top));
   }
 }
 
