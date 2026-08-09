@@ -28,13 +28,6 @@ import { activeShip, FIELD_R, FIELD_SOLID_R, SHIP_BOB_AMPLITUDE, SHIP_BOB_SPEED,
 import { rotateCells, stampAnchor, stampBlockInfo, snappedStampPos,
          setOnSkeletonPlaced, setOnSkeletonReset, skeletonBlockInfo } from "./stamps.js";
 
-/* ================= starfield backdrop =================
-   World-space so stars stay put as you pan, rather than sliding with
-   the screen. */
-const stars=[];
-const STAR_COUNT = Math.round(120 * (W*H)/(VIEW_W*VIEW_H));
-for(let i=0;i<STAR_COUNT;i++) stars.push([Math.floor(Math.random()*W), Math.floor(Math.random()*H), 30+Math.random()*70]);
-
 /* ================= camera follow =================
    PILOT tracks the ship — a state where it's moving under something
    other than manual pan. HOVER/DISEMBARK leave the camera fully manual
@@ -530,11 +523,6 @@ function resizeVecOverlay(){
 }
 resizeBuffers(TILE_PX);
 
-// EDGE WARNING GRADIENT — no hard cut to void at a world edge, a red glow
-// instead, strongest right at the boundary, fading out with distance.
-const EDGE_RED=[196,26,38];
-const EDGE_GLOW_FALLOFF=120;   // world cells of runway before it's fully faded to plain void
-
 /* ================= temperature tint =================
    Deliberately on an ABSOLUTE scale, not relative to each material's own
    spawnTemp — two different materials mid-diffusion at the same actual
@@ -745,25 +733,29 @@ function paintCell(vx, vy, wx, wy){
   return s!==0 || heatGlowF>0;
 }
 
-// Out-of-world edge-glow pixel — pure screen-space, no grid cell backs it,
-// so it can never be subchunk-tracked; always needs repainting every frame
-// regardless of dirty state (the pulse term below is frame-driven). pulse
-// is passed in rather than recomputed per pixel — it depends only on
-// `frame`, identical for every pixel in the edge band, so hoisting it out
-// to be computed ONCE per render() call (both paths do this now) instead
-// of once per pixel (up to ~86,000 redundant Math.sin() calls/frame on
-// this site's actual camera position) was a free, zero-risk fix
-// independent of the bigger dirty-rects work.
-function paintEdgeCell(vx, vy, wx, wy, pulse){
-  let exX=0; if(wx<0) exX=-wx; else if(wx>=W) exX=wx-W+1;
-  let exY=0; if(wy<0) exY=-wy; else if(wy>=H) exY=wy-H+1;
-  const dist=Math.max(exX,exY);
-  const t=Math.min(1, dist/EDGE_GLOW_FALLOFF + pulse);
-  fillBlock(bd, vx, vy,
-    Math.round(EDGE_RED[0]+(13-EDGE_RED[0])*t),
-    Math.round(EDGE_RED[1]+(10-EDGE_RED[1])*t),
-    Math.round(EDGE_RED[2]+(20-EDGE_RED[2])*t), 255);
-  fillBlock(gd, vx, vy, EDGE_RED[0], EDGE_RED[1], EDGE_RED[2], Math.round(180*(1-t)));
+// Out-of-world pixel — pure screen-space, no grid cell backs it, so it
+// can never be subchunk-tracked; always repainted every frame regardless
+// of dirty state, exactly as before this change.
+//   USED TO paint the original game's red "near the world edge" warning
+// gradient here. On this site that read as a permanent pulsing red band
+// across roughly the top third of the screen — VIEW_H=576 vs H=384 means
+// the out-of-world zone is always on screen with this fixed, never-
+// panning camera, not an edge case you'd only see while scrolling — and
+// it sat on top of the rainbow-frame rings' own top band, hiding it
+// completely. Now just transparent, so the CSS rings show through here
+// the same way paintCell's inVoidHoleBand already does for in-world
+// empty cells in the border zone.
+//   The dirty-rects path (below) does NOT bulk-clear gd for the out-of-
+// world region — it relies on this function overwriting its own gd
+// pixels every frame, so the fillBlock(gd,...) call stays even though
+// it's now writing zero: dropping it would leave stale glow values
+// sitting in that buffer forever in dirty-rects mode specifically (the
+// legacy path's own gd.fill(0) would mask the same omission there, so
+// this wouldn't have shown up in quick testing — worth knowing why it's
+// not just dead weight).
+function paintEdgeCell(vx, vy){
+  fillBlock(bd, vx, vy, 0,0,0, 0);
+  fillBlock(gd, vx, vy, 0,0,0, 0);
 }
 
 // Zero a screen-space rect [vx0,vx1)x[vy0,vy1) in CELL coordinates (same
@@ -790,10 +782,6 @@ export function render(){
   const wantScale = (tilesEnabled && sc<=tileZoomThreshold) ? TILE_PX : 1;
   if(wantScale!==renderScale) resizeBuffers(wantScale);
   bd=bimg.data; gd=gimg.data; gasD=gasImg.data;
-  // pulse depends only on `frame` — identical for every out-of-world pixel
-  // in a given render() call. Computed once here and threaded through
-  // paintEdgeCell instead of recomputed per pixel (both paths below).
-  const pulse=(Math.sin(frame*0.04)+1)*0.05;
   const useDirtyRects = flatDirtyRectsEnabled && sc===1
     && Number.isInteger(camera.x) && Number.isInteger(camera.y);
 
@@ -841,14 +829,13 @@ export function render(){
     // bands surrounding the in-world rect (top/bottom full-width, then
     // left/right for just the middle row range, so corners aren't
     // double-painted). Always repainted every frame — screen-space, no
-    // subchunk backs it, and the pulse term above makes it animated
-    // regardless. On THIS site's fixed camera only the top band is ever
-    // non-empty (VIEW_H=576 > H=384), but this stays general rather than
-    // hardcoding that assumption.
-    for(let vy=0; vy<svy0; vy++) for(let vx=0; vx<VIEW_W; vx++) paintEdgeCell(vx,vy,camera.x+vx,camera.y+vy,pulse);
-    for(let vy=Math.max(svy0,svy1); vy<VIEW_H; vy++) for(let vx=0; vx<VIEW_W; vx++) paintEdgeCell(vx,vy,camera.x+vx,camera.y+vy,pulse);
-    for(let vy=Math.max(0,svy0); vy<Math.min(VIEW_H,svy1); vy++) for(let vx=0; vx<svx0; vx++) paintEdgeCell(vx,vy,camera.x+vx,camera.y+vy,pulse);
-    for(let vy=Math.max(0,svy0); vy<Math.min(VIEW_H,svy1); vy++) for(let vx=Math.max(svx0,svx1); vx<VIEW_W; vx++) paintEdgeCell(vx,vy,camera.x+vx,camera.y+vy,pulse);
+    // subchunk backs it. On THIS site's fixed camera only the top band is
+    // ever non-empty (VIEW_H=576 > H=384), but this stays general rather
+    // than hardcoding that assumption.
+    for(let vy=0; vy<svy0; vy++) for(let vx=0; vx<VIEW_W; vx++) paintEdgeCell(vx,vy);
+    for(let vy=Math.max(svy0,svy1); vy<VIEW_H; vy++) for(let vx=0; vx<VIEW_W; vx++) paintEdgeCell(vx,vy);
+    for(let vy=Math.max(0,svy0); vy<Math.min(VIEW_H,svy1); vy++) for(let vx=0; vx<svx0; vx++) paintEdgeCell(vx,vy);
+    for(let vy=Math.max(0,svy0); vy<Math.min(VIEW_H,svy1); vy++) for(let vx=Math.max(svx0,svx1); vx<VIEW_W; vx++) paintEdgeCell(vx,vy);
   } else {
     // ---- LEGACY FULL-REPAINT PATH. Always correct regardless of camera
     // scale/position — the on-device A/B baseline for the path above.
@@ -865,7 +852,7 @@ export function render(){
       for(let vx=0; vx<VIEW_W; vx++){
         const wx=Math.round(camera.x+vx*sc);
         if(wx<0||wx>=W||wy<0||wy>=H){
-          paintEdgeCell(vx,vy,wx,wy,pulse);
+          paintEdgeCell(vx,vy);
           continue;
         }
         paintCell(vx,vy,wx,wy);
@@ -892,25 +879,8 @@ export function render(){
       }
     }
   }
-  // starfield in the void — same small-marker treatment as particles, twinkle
-  // computed once per star per frame rather than per subpixel.
-  const SMARK = renderScale===1 ? 1 : Math.max(1, Math.round(renderScale*0.25));
-  const soff = renderScale===1 ? 0 : Math.floor((renderScale-SMARK)/2);
-  for(const [sx,sy,br] of stars){
-    const vx=Math.round((sx-camera.x)/sc), vy=Math.round((sy-camera.y)/sc);
-    if(vx<0||vx>=VIEW_W||vy<0||vy>=VIEW_H) continue;
-    if(grid[idx(sx,sy)]===EMPTY){
-      const tw=br+Math.random()*25;
-      const ox=vx*renderScale+soff, oy=vy*renderScale+soff;
-      for(let ty=0; ty<SMARK; ty++){
-        let o=((oy+ty)*BW+ox)*4;
-        for(let tx=0; tx<SMARK; tx++, o+=4){ bd[o]=tw; bd[o+1]=tw; bd[o+2]=Math.min(255,tw+20); }
-      }
-    }
-  }
   // sky layer: sun/nebula/planet/cloud/star, placed by the player (see
-  // main.js's Sky sheet). Void-masked the same way the starfield above
-  // already is — check grid emptiness before writing each pixel a shape
+  // main.js's Sky sheet). Void-masked — check grid emptiness before writing each pixel a shape
   // covers, not a plain filled circle, or something placed near the
   // coast would paint over real terrain instead of sitting behind it.
   // The default ambient thermostat (visible:false) never reaches here.
