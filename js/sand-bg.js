@@ -352,6 +352,17 @@ const LEDGE_WIDTH_SCALE = 0.7;
 // to each element's own measured height, not a fixed pixel/vmin offset.
 const LEDGE_RAISE_MULT = 0.1;
 
+// ---- TEMPORARY DIAGNOSTIC — remove once the ledge-height bug is found.
+// Raw math says LEDGE_RAISE_MULT at its current value can only be moving
+// ledges a few px, nowhere near enough to explain ledges landing a full
+// line above their letters — so this isn't a tuning problem, it's a real
+// bug in the geometry somewhere above. Rather than guess more constants
+// blind, this dumps the actual measured numbers straight onto the screen
+// (not just console.log) since testing happens via phone screenshot, not
+// attached devtools. Flip to false and delete the block below it once
+// this is solved.
+const LEDGE_DEBUG = true;
+
 function applyDomColliders() {
   clearDomColliders();
   purgeVoidstoneInFloorZone();
@@ -360,6 +371,23 @@ function applyDomColliders() {
 
   function screenYToWorldRow(screenY) {
     return Math.ceil(camera.y + (screenY - rect0.top) / rect0.height * VIEW_H * camera.scale);
+  }
+
+  // Inverse of screenYToWorldRow — converts a computed world row back to
+  // a screen Y, so the debug panel can show "the ledge will render at
+  // screen Y=___" directly comparable to where the letter visually sits,
+  // rather than an opaque world-row number.
+  function worldRowToScreenY(row) {
+    return rect0.top + (row - camera.y) / (VIEW_H * camera.scale) * rect0.height;
+  }
+
+  let debugLines = null;
+  if (LEDGE_DEBUG) {
+    debugLines = [
+      `rect0: top=${rect0.top.toFixed(1)} h=${rect0.height.toFixed(1)}`,
+      `camera.y=${camera.y} CELL_PX=${CELL_PX} VIEW_H=${VIEW_H}`,
+      `--`,
+    ];
   }
 
   function placeLedge(wx0, wx1, wyAnchor) {
@@ -403,8 +431,32 @@ function applyDomColliders() {
     const worldHeight = r.height / rect0.height * VIEW_H * camera.scale;
     const raise = Math.round(worldHeight * LEDGE_RAISE_MULT);
 
-    const wyAnchor = screenYToWorldRow(r.top) - raise;
+    const baseRow = screenYToWorldRow(r.top);
+    const wyAnchor = baseRow - raise;
     placeLedge(wx0, wx1, wyAnchor);
+
+    if (LEDGE_DEBUG) {
+      const backY = worldRowToScreenY(wyAnchor);
+      debugLines.push(
+        `${el.textContent}: top=${r.top.toFixed(1)} h=${r.height.toFixed(1)} ` +
+        `baseRow=${baseRow} raise=${raise} anchorRow=${wyAnchor} -> screenY=${backY.toFixed(1)}`
+      );
+    }
+  }
+
+  if (LEDGE_DEBUG) {
+    let panel = document.getElementById("ledgeDebugPanel");
+    if (!panel) {
+      panel = document.createElement("div");
+      panel.id = "ledgeDebugPanel";
+      panel.style.cssText =
+        "position:fixed; top:0; left:0; z-index:99999; max-width:100vw; " +
+        "max-height:60vh; overflow:auto; background:rgba(0,0,0,0.88); " +
+        "color:#4f4; font:9px/1.3 monospace; padding:6px; white-space:pre; " +
+        "pointer-events:none;";
+      document.body.appendChild(panel);
+    }
+    panel.textContent = debugLines.join("\n");
   }
 }
 
