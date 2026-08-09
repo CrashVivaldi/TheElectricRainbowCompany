@@ -95,9 +95,9 @@ camera.y = Math.floor(camera.y);
 // needed, confirmed by reading trySwap directly rather than assuming.
 // This is the drain mechanism for the live-sand cap below: holes bleed
 // off standing piles continuously instead of needing an active prune.
-// Side drain holes align with the rainbow frame inset (see
-// rainbowFrameInnerXRange) — everything outside the inner border on the
-// floor row is void; sand falls through.
+// Edge holes are sized from the rainbow frame inset (see buildFloor);
+// center hole tracks the title width; both are rebuilt on resize.
+const FLOOR_EDGE_HOLE_SCALE = 0.88;   // slightly narrower than the border bands
 const FLOOR_Y = H - 1;
 const floorCells = new Set();   // real indices actually placed as floor — NOT just "W of them", since holes mean it's fewer. Used below to keep the live-sand cap counting painted material only, not structural floor.
 
@@ -300,6 +300,24 @@ function clearDomColliders() {
   domColliderCells.clear();
 }
 
+// Rows at/just above the floor row — no invisible Voidstone shelves here.
+// Word play shelves live under the title (mid-screen); bottom drain holes
+// are EMPTY floor cells only. This band catches any stale bottom ledges
+// from earlier builds or missed tracking on resize.
+const FLOOR_LEDGE_ZONE_TOP = FLOOR_Y - 10;
+
+function purgeVoidstoneInFloorZone() {
+  for (let y = FLOOR_LEDGE_ZONE_TOP; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = idx(x, y);
+      if (grid[i] !== VOIDSTONE) continue;
+      grid[i] = EMPTY;
+      domColliderCells.delete(i);
+      wake(x, y);
+    }
+  }
+}
+
 // How thick (world cells) the invisible footing under each text collider
 // is. Independent of CELL_PX (that's screen pixels per cell, this is
 // world-space) — stays a small, thin strip regardless of grain size.
@@ -322,6 +340,7 @@ function rainbowFrameInsetPx() {
 
 function applyDomColliders() {
   clearDomColliders();
+  purgeVoidstoneInFloorZone();
   const rect0 = canvases[0].getBoundingClientRect();
   const els = document.querySelectorAll(".solid-collider");
 
@@ -331,6 +350,8 @@ function applyDomColliders() {
 
   function placeLedge(wx0, wx1, wyBottom) {
     const wy0 = wyBottom - COLLIDER_LEDGE_THICKNESS;
+    // Word shelves only — never recreate the old bottom-border footing.
+    if (wy0 >= FLOOR_LEDGE_ZONE_TOP) return;
     for (let y = wy0; y < wyBottom; y++) {
       for (let x = wx0; x < wx1; x++) {
         if (x < 0 || x >= W || y < 0 || y >= H) continue;
@@ -343,54 +364,12 @@ function applyDomColliders() {
     }
   }
 
-  function screenXToWorldXLocal(screenX) {
-    return Math.floor(camera.x + (screenX - rect0.left) / rect0.width * VIEW_W * camera.scale);
-  }
-  function screenXToWorldXLocalEnd(screenX) {
-    return Math.ceil(camera.x + (screenX - rect0.left) / rect0.width * VIEW_W * camera.scale);
-  }
-
-  // Ledge raised 10% toward the letters (lowered again from 20%).
-  function ledgeScreenYForRect(r) {
-    return r.bottom - (r.bottom - r.top) * 0.1;
-  }
-
-  const LETTER_LEDGE_WIDTH_INSET = 0.12;   // narrow each letter shelf slightly
-
-  // One footing segment per letter (gaps between letters are holes).
-  function forEachLetterRect(el, cb) {
-    const node = el.firstChild;
-    if (!node || node.nodeType !== Node.TEXT_NODE) {
-      cb(el.getBoundingClientRect());
-      return;
-    }
-    const range = document.createRange();
-    for (let i = 0; i < node.textContent.length; i++) {
-      range.setStart(node, i);
-      range.setEnd(node, i + 1);
-      const r = range.getBoundingClientRect();
-      if (r.width <= 0 && r.height <= 0) continue;
-      cb(r);
-    }
-  }
-
   for (const el of els) {
-    forEachLetterRect(el, (r) => {
-      const shrink = r.width * LETTER_LEDGE_WIDTH_INSET;
-      placeLedge(
-        screenXToWorldXLocal(r.left + shrink),
-        screenXToWorldXLocalEnd(r.right - shrink),
-        screenYToWorldRow(ledgeScreenYForRect(r)),
-      );
-    });
+    const r = el.getBoundingClientRect();
+    const wx0 = Math.floor(camera.x + (r.left - rect0.left) / rect0.width * VIEW_W * camera.scale);
+    const wx1 = Math.ceil(camera.x + (r.right - rect0.left) / rect0.width * VIEW_W * camera.scale);
+    placeLedge(wx0, wx1, screenYToWorldRow(r.bottom));
   }
-
-  // Continuous shelf along the inner bottom edge of the rainbow frame —
-  // sand piles here and reads as sitting on top of the border. Ends where
-  // the inner left/right border rings begin; outside that is void.
-  const frameBottomScreenY = window.innerHeight - rainbowFrameInsetPx();
-  const inner = rainbowFrameInnerXRange();
-  placeLedge(inner.wx0, inner.wx1, screenYToWorldRow(frameBottomScreenY));
 }
 
 function screenXToWorldX(screenX) {
@@ -398,14 +377,12 @@ function screenXToWorldX(screenX) {
   return camera.x + (screenX - rect0.left) / rect0.width * VIEW_W * camera.scale;
 }
 
-// World-x span inside the rainbow frame's inner left/right edges (viewport
-// inset matches index.html --frame-inset). Rebuilt on resize/orientation.
-function rainbowFrameInnerXRange() {
-  const inset = rainbowFrameInsetPx();
-  return {
-    wx0: Math.floor(screenXToWorldX(inset)),
-    wx1: Math.ceil(screenXToWorldX(window.innerWidth - inset)),
-  };
+function edgeHoleWorldWidth() {
+  const insetPx = rainbowFrameInsetPx();
+  const rect0 = canvases[0].getBoundingClientRect();
+  if (!rect0.width) return 4;
+  const insetWorld = (insetPx / rect0.width) * VIEW_W * camera.scale;
+  return Math.max(2, Math.floor(insetWorld * FLOOR_EDGE_HOLE_SCALE));
 }
 
 function clearFloorRow() {
@@ -429,14 +406,36 @@ function mergeHoleRanges(ranges) {
   return merged;
 }
 
+function updateFloorGapCss(titleRect) {
+  const pad = rainbowFrameInsetPx() * 0.3;
+  document.documentElement.style.setProperty("--floor-gap", `${titleRect.width + pad * 2}px`);
+}
+
 function buildFloor() {
   if (usingInitialGrid) return;
   clearFloorRow();
+  const edgeW = edgeHoleWorldWidth();
+  // Edge holes must line up with the SCREEN edges, not the world's true
+  // edges — the camera only ever shows a cropped middle slice of the
+  // wider world (camera.x .. camera.x+VIEW_W*camera.scale), so a hole
+  // placed at world x=0/W sits far outside anything visible. Floor rows
+  // outside the visible slice are unreachable anyway (painting/screen
+  // math only ever produces world coords inside it), so it's safe to
+  // only build floor within that range.
   const viewLeft = Math.floor(camera.x);
   const viewRight = Math.ceil(camera.x + VIEW_W * camera.scale);
-  const inner = rainbowFrameInnerXRange();
-  // Left and right holes: viewport edge out to where the rainbow border starts.
-  const holes = [[viewLeft, inner.wx0], [inner.wx1, viewRight]];
+  const holes = [[viewLeft, viewLeft + edgeW], [viewRight - edgeW, viewRight]];
+
+  const title = document.querySelector(".stage h1");
+  if (title) {
+    const r = title.getBoundingClientRect();
+    holes.push([
+      Math.max(0, Math.floor(screenXToWorldX(r.left)) - 1),
+      Math.min(W, Math.ceil(screenXToWorldX(r.right)) + 1),
+    ]);
+    updateFloorGapCss(r);
+  }
+
   const merged = mergeHoleRanges(holes);
   const inHole = (x) => merged.some(([a, b]) => x >= a && x < b);
 
