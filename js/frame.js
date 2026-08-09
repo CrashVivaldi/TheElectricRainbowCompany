@@ -43,14 +43,11 @@
   // practice.
   const PASSES = 2;
 
-  // Deliberate empty gap between one pass and the next, in vmin — nothing
-  // is drawn here, it's pure spacing. Without this, pass 2 starts exactly
-  // where pass 1's last ring ends, which reads as one crowded stripe stack
-  // rather than two distinct, separately-legible reflections at different
-  // depths. This is the knob for "further apart" between passes, not
-  // PASS_SCALE — that controls how much each pass COMPRESSES relative to
-  // the last, not how much space sits between them.
-  const PASS_GAP_VMIN = 0.5;
+  // Gap between passes uses `sep` directly (read from --sep in CSS below)
+  // rather than a separate constant — that makes the purple-to-red
+  // transition between pass 0 and pass 1 exactly the same width as every
+  // other separator in pass 0, so there's no visible seam at the join.
+  // Assigned after sep is parsed; see the PASS_GAP line inside build().
 
   // Each pass's COLORED ring thicknesses, as a fraction of the previous
   // pass. Wants to be aggressive: real reflections compress hard toward
@@ -202,7 +199,7 @@
       // space between one pass ending and the next beginning, and the last
       // pass doesn't leave a trailing gap with nothing on the other side of
       // it.
-      if (p > 0) offset += PASS_GAP_VMIN;
+      if (p > 0) offset += sep;  // match pass 0's separator width exactly
 
       for (let i = 0; i < SEQUENCE.length; i++) {
         const entry = SEQUENCE[i];
