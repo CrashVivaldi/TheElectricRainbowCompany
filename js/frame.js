@@ -2,40 +2,33 @@
 // frame.js — builds the rainbow border as a multi-pass infinity mirror.
 //
 // The border used to be nine hand-written <div>s in index.html, one per ring.
-// That was fine at nine. It is not fine at twenty-seven, and it would be
-// actively hostile at whatever number PASSES gets set to next — so the rings
-// are generated here instead, and index.html now ships an empty
-// .rainbow-frame wrapper for this file to populate.
+// That was fine at nine. It is not fine at eighteen, and it would be actively
+// hostile at whatever number PASSES gets set to next — so the rings are
+// generated here instead, and index.html ships an empty .rainbow-frame
+// wrapper for this file to populate.
 //
 // WHAT AN "INFINITY MIRROR" MEANS HERE: the five-color rainbow sequence is
 // painted PASSES times, each repetition thinner and darker than the last,
-// nesting inward. Combined with the per-ring parallax from tilt.js, the
-// repetitions read as reflections receding into the screen rather than as a
-// merely thicker border.
+// nesting inward with a deliberate gap between repetitions (PASS_GAP_VMIN)
+// so they read as two distinct receding reflections rather than one fatter
+// border. Combined with the per-ring parallax from tilt.js, they read as
+// reflections at different depths rather than concentric stripes.
 //
-// ============================================================================
-// THE ONE HARD CONSTRAINT, AND WHY IT SHAPES EVERYTHING BELOW
-// ============================================================================
-// sand-bg.js's rainbowFrameInsetPx() computes the physics boundary as
-// literally `5 * band + 4 * sep` — it reads the --band and --sep custom
-// properties and reconstructs a SINGLE pass's width from them. It does not
-// read --frame-inset, and it has no concept of repetitions.
+// NO STRUCTURAL WIDTH CONSTRAINT, as of this pass — worth stating plainly
+// since an earlier version of this file had a hard one. sand-bg.js used to
+// derive its physics boundary (floor drain, DOM colliders) from
+// `5*band + 4*sep`, via a function called rainbowFrameInsetPx(). That
+// function no longer exists — the floor rewrite (sand-bg.js) made floor
+// placement a fixed px-based constant divided through CELL_PX, with no
+// dependency on this file's dimensions at all. --band and --sep are free to
+// change for pure visual reasons now, with nothing downstream to keep in
+// sync by hand.
 //
-// That function is what positions the floor drain, the DOM colliders, and
-// (via --frame-inset) the palette groups and the contact link. If the total
-// painted border ever stopped matching `5*band + 4*sep`, the invisible
-// physics edge would drift away from the visible inner edge and sand would
-// start piling up against nothing, or vanishing into the border.
-//
-// So: PASS 1 IS EXACTLY 5*band + 4*sep WIDE, always. That is the contract.
-// Passes 2..N are drawn INSIDE the play area as decoration, not as part of
-// the frame's structural width. Nothing in sand-bg.js needs to know they
-// exist, and nothing in sand-bg.js was changed to support them.
-//
-// This is also why the extra passes look right rather than looking like a
-// fatter border: sand falls IN FRONT of them (index.html raises #stageWrap
-// above the rings in the stacking order), so they sit behind the simulation
-// the way a reflection sits behind glass. Reflections you can pour sand over.
+// STACKING ORDER: the rings currently paint ABOVE the sim (see index.html's
+// own STACKING ORDER comment for why that reverted from the opposite order
+// this file's design once assumed) — so what covers what is a z-index
+// question decided in index.html, not something this file needs to reason
+// about.
 // ============================================================================
 
 (function () {
@@ -44,10 +37,20 @@
   // ---- tuning ----------------------------------------------------------
 
   // Total repetitions of the 5-color sequence, including the first. 1 gives
-  // exactly the old single-pass border. Each additional pass costs 9 more
-  // composited fixed-position elements, so this is not free at large values,
-  // but at 3 it is 27 transform-only layers and unmeasurable in practice.
-  const PASSES = 3;
+  // a plain single-pass border. Each additional pass costs 9 more
+  // composited fixed-position elements, so this is not free at large
+  // values, but at 2 it is 18 transform-only layers and unmeasurable in
+  // practice.
+  const PASSES = 2;
+
+  // Deliberate empty gap between one pass and the next, in vmin — nothing
+  // is drawn here, it's pure spacing. Without this, pass 2 starts exactly
+  // where pass 1's last ring ends, which reads as one crowded stripe stack
+  // rather than two distinct, separately-legible reflections at different
+  // depths. This is the knob for "further apart," not PASS_SCALE — that one
+  // controls how much each pass COMPRESSES relative to the last, not how
+  // much space sits between them.
+  const PASS_GAP_VMIN = 1.4;
 
   // Each pass's ring thicknesses, as a fraction of the previous pass. This is
   // the single most important number for whether the effect reads as DEPTH
@@ -58,33 +61,34 @@
   const PASS_SCALE = 0.45;
 
   // Each pass's brightness, as a fraction of the previous. Compounds, so at
-  // 0.55 the three passes land at 100% / 55% / 30%.
+  // 0.55 two passes land at 100% / 55%.
   //   Applied by mixing the ring color toward --void rather than by setting
-  // opacity. Opacity would let whatever is behind the border show through the
-  // rings, which — now that the sand sim renders IN FRONT of the frame — would
-  // mean the deep passes get tinted by the page background in a way that
-  // shifts as the sim moves. Mixing toward the void color is stable, and it
-  // is also what a dimmer reflection physically is: less light, not partial
-  // transparency.
+  // opacity. Opacity would let whatever is behind the border show through
+  // the rings, which would mean the deep passes get tinted by whatever's
+  // rendering underneath in a way that shifts as the sim moves. Mixing
+  // toward the void color is stable, and it is also what a dimmer
+  // reflection physically is: less light, not partial transparency.
   const PASS_DIM = 0.55;
 
   // Minimum thickness any ring is allowed to have, in vmin. This exists
-  // because PASS_SCALE compounds and vmin is small: at 0.45, a third-pass
-  // colored ring computes to 0.0709vmin, which on a 390px-wide phone is
-  // 0.28 device pixels. That does not render as a thin line — it renders as
-  // an inconsistent smear or nothing at all, depending on how the device
-  // rounds it, and the whole third pass effectively disappears on the exact
-  // hardware this effect is built for.
+  // because PASS_SCALE compounds and vmin is small: a compressed second-pass
+  // colored ring can compute to a fraction of a device pixel, which does not
+  // render as a thin line — it renders as an inconsistent smear or nothing
+  // at all, depending on how the device rounds it, and that pass effectively
+  // disappears on real hardware.
   //   0.25vmin is about 1 device pixel on a typical phone, which is the
-  // narrowest a line can be and still be reliably drawn.
+  // narrowest a line can be and still be reliably drawn. Left unchanged even
+  // as --band/--sep got thinner this pass — it's a hardware floor, not a
+  // proportion of the base thickness, so it doesn't scale down with them.
+  // Real consequence: pass 2's colored rings may render at close to the same
+  // physical thickness as pass 1's rather than visibly thinner, since both
+  // now sit near this floor. What still reads as "thinner and further back"
+  // is the gap and the dimming, not the stroke weight.
   //   The tradeoff, stated plainly: floored rings stop compressing in
   // THICKNESS while continuing to compress in SPACING. That is a real
   // departure from strict perspective, but it is the right one — the eye
   // reads depth from the spacing rhythm far more than from line weight, and
   // a correctly-scaled invisible line communicates nothing at all.
-  //   Only affects passes 2 and up: the floor is below both --band (0.35) and
-  // --sep (1.2425), so pass 1 is never touched by it and the sand-bg.js width
-  // contract is unaffected.
   const MIN_THICKNESS_VMIN = 0.25;
 
   // Exponent on the normalized ring index when computing parallax depth.
@@ -181,8 +185,9 @@
 
     host.innerHTML = "";
 
-    // First pass: exactly the structural width sand-bg.js assumes. Asserted
-    // rather than assumed — see the contract note at the top of this file.
+    // The first pass's own width — informational only now (exposed on
+    // window.RainbowFrame below), not load-bearing anywhere. No downstream
+    // code depends on this specific number; see the file header for why.
     const passOneWidth = 5 * band + 4 * sep;
 
     // Precompute every ring's geometry before touching the DOM, so the total
@@ -194,6 +199,12 @@
     let offset = 0;
 
     for (let p = 0; p < PASSES; p++) {
+      // Gap goes BEFORE a pass's rings, not after — so it sits in the empty
+      // space between one pass ending and the next beginning, and the last
+      // pass doesn't leave a trailing gap with nothing on the other side of
+      // it.
+      if (p > 0) offset += PASS_GAP_VMIN;
+
       const scale = Math.pow(PASS_SCALE, p);
       const brightness = Math.pow(PASS_DIM, p);
 
@@ -240,11 +251,10 @@
       // moves inward; separate elements get no such favor.
       //   Once the stack runs deeper than --radius, this goes negative and is
       // clamped to 0, squaring off the corners of the innermost passes while
-      // the outer ones stay round. At the shipped values that happens partway
-      // through pass 2. It is far less visible than it sounds — those passes
-      // are heavily dimmed and have sand falling in front of them — but the
-      // fix, if it ever reads wrong, is to raise --radius in index.html,
-      // accepting rounder corners on pass 1 as the tradeoff.
+      // the outer ones stay round. It is far less visible than it sounds —
+      // those passes are heavily dimmed — but the fix, if it ever reads
+      // wrong, is to raise --radius in index.html, accepting rounder
+      // corners on pass 1 as the tradeoff.
       const rad = Math.max(0, radius - r.offset);
       el.style.borderRadius = `${rad.toFixed(4)}vmin`;
 

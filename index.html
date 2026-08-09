@@ -23,22 +23,20 @@
     --c-blue:   #2E86F5;
     --c-purple: #9B4FE0;
 
-    /* Retuned: colored bands halved (0.7 -> 0.35), black separators
-       thickened to compensate (0.805 -> 1.2425). 5*0.35 + 4*1.2425 =
-       6.72vmin — byte-for-byte the same total width as before, which is
-       not a coincidence and is not optional:
-         sand-bg.js's rainbowFrameInsetPx() reconstructs the physics
-       boundary as literally 5*band + 4*sep. It does not read
-       --frame-inset and knows nothing about repetitions. Keeping that
-       sum at 6.72vmin is what lets the whole multi-pass infinity mirror
-       ship with ZERO changes to sand-bg.js — the floor drain, the DOM
-       colliders, the palette groups and the contact link all still land
-       exactly where they did.
-         Change these two numbers freely, but change them TOGETHER so the
-       sum holds, or the invisible physics edge drifts away from the
-       visible one and sand starts piling against nothing. */
-    --band: 0.35vmin;
-    --sep:  1.2425vmin;
+    /* Retuned again, this pass: thinner overall (band 0.35->0.22, sep
+       1.2425->0.8, roughly the same proportion between them as before,
+       just both scaled down) for a finer, less crowded line weight.
+         NO WIDTH CONSTRAINT to honor here anymore, unlike an earlier
+       version of this comment — sand-bg.js's floor placement is a fixed
+       px constant now (FLOOR_RAISE_PX, divided through CELL_PX), with no
+       dependency on --band/--sep at all. These two numbers are free to
+       change for purely visual reasons. --frame-inset below still derives
+       from them (it positions the palette groups and contact link just
+       inside the visible border), so it shrinks proportionally along with
+       the thinner frame — that's the correct, intended consequence of
+       thinning the border, not something to compensate for. */
+    --band: 0.22vmin;
+    --sep:  0.8vmin;
     --radius: 8vmin;
     --frame-inset: calc(5 * var(--band) + 4 * var(--sep));
 
