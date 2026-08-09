@@ -199,7 +199,7 @@
       // space between one pass ending and the next beginning, and the last
       // pass doesn't leave a trailing gap with nothing on the other side of
       // it.
-      if (p > 0) offset += sep;  // match pass 0's separator width exactly
+      if (p > 0) offset += 1.0;  // 1.0vmin between passes — slightly wider than --sep (0.8vmin)
 
       for (let i = 0; i < SEQUENCE.length; i++) {
         const entry = SEQUENCE[i];
