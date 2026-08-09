@@ -343,14 +343,14 @@ const COLLIDER_LEDGE_THICKNESS = 1;
 // visibly fall through at typical grain sizes. Shrinking each ledge toward
 // the letter's center opens those gaps up without changing the markup or
 // the letter spacing itself. 1.0 = full bounding-box width (old behavior).
-const LEDGE_WIDTH_SCALE = 0.4;
+const LEDGE_WIDTH_SCALE = 0.7;
 
 // Ledges sit above the letters rather than flush with them — this is how
 // many multiples of the LETTER'S OWN HEIGHT the ledge is lifted above its
 // top edge, so sand collects visibly above the wordmark instead of resting
 // directly on it. Scales with font size automatically since it's relative
 // to each element's own measured height, not a fixed pixel/vmin offset.
-const LEDGE_RAISE_MULT = 0.4;
+const LEDGE_RAISE_MULT = 0.1;
 
 function applyDomColliders() {
   clearDomColliders();
