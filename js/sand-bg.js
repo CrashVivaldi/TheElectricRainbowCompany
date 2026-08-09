@@ -345,6 +345,13 @@ const COLLIDER_LEDGE_THICKNESS = 1;
 // the letter spacing itself. 1.0 = full bounding-box width (old behavior).
 const LEDGE_WIDTH_SCALE = 0.7;
 
+// How far above each letter's bottom edge the ledge sits, expressed as a
+// multiple of the letter's own measured line-box height. The line-box is
+// taller than the visible ink (~52px box for ~35px glyph on phone), so
+// the effective raise in screen pixels is MULT × line-box-height. At 0.5
+// that's roughly one visible letter-height above the bottom edge.
+const LEDGE_RAISE_MULT = 0.5;
+
 function applyDomColliders() {
   clearDomColliders();
   purgeVoidstoneInFloorZone();
@@ -387,7 +394,9 @@ function applyDomColliders() {
     wx0 = Math.floor(center - narrowWidth / 2);
     wx1 = wx0 + narrowWidth;
 
-    placeLedge(wx0, wx1, screenYToWorldRow(r.bottom));
+    const worldHeight = r.height / rect0.height * VIEW_H * camera.scale;
+    const raise = Math.round(worldHeight * LEDGE_RAISE_MULT);
+    placeLedge(wx0, wx1, screenYToWorldRow(r.bottom) - raise);
   }
 }
 
