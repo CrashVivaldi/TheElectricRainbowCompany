@@ -26,6 +26,57 @@
     --sep:  0.805vmin;
     --radius: 8vmin;
     --frame-inset: calc(5 * var(--band) + 4 * var(--sep));
+
+    /* ---------- Infinity-mirror tilt (js/tilt.js) ----------
+       tilt.js writes --tilt-x / --tilt-y every frame, both in [-1, 1],
+       from the gyro on a phone or the pointer on desktop. Declared here
+       with a 0 fallback so the border renders correctly at rest even if
+       tilt.js fails to load, is blocked, or the visitor has reduced
+       motion on — in every one of those cases every translate() below
+       evaluates to 0 and the frame is pixel-identical to the old
+       single-element version. */
+    --tilt-x: 0;
+    --tilt-y: 0;
+
+    /* Maximum displacement of the DEEPEST (innermost, purple) ring at
+       full tilt. Every other ring is a fraction of this, per --ring-N-d
+       below. This is the single knob that controls how strong the whole
+       effect reads — start here when tuning.
+         NEGATIVE VALUES ARE VALID and flip the apparent depth direction:
+       positive makes the rings read as receding INTO the screen (a well),
+       negative makes them read as protruding OUT of it (a lens). Which
+       one "looks right" is genuinely a matter of taste and of which way
+       your brain resolves the ambiguity, so try both before deciding. */
+    --tilt-depth: 10px;
+
+    /* How much the deepest ring dims relative to the outermost, mimicking
+       a real infinity mirror losing energy on each bounce. 0 disables the
+       fade entirely and restores the exact current on-screen appearance
+       of the border at rest. Applied only to the COLORED rings — see the
+       note in the ring block below for why the black separators are
+       deliberately left opaque. */
+    --ring-fade: 0.22;
+
+    /* Per-ring depth fraction, 0 (outermost, pinned) to 1 (innermost,
+       moves the full --tilt-depth). Deliberately NOT linear: the spacing
+       accelerates inward, which is what makes the rings read as a
+       receding corridor rather than a stack of cards sliding past each
+       other at even intervals. Real reflections in an infinity mirror
+       compress toward the vanishing point; even spacing looks like a
+       parallax effect, uneven spacing looks like depth.
+         The outermost ring is pinned at exactly 0 on purpose. It is the
+       physical bezel of the frame, and it is also flush with the screen
+       edge — displacing it at all would swing it off the viewport and
+       open a sliver of bare --void along one side on every tilt. */
+    --ring-0-d: 0;
+    --ring-1-d: 0.02;
+    --ring-2-d: 0.06;
+    --ring-3-d: 0.12;
+    --ring-4-d: 0.20;
+    --ring-5-d: 0.32;
+    --ring-6-d: 0.48;
+    --ring-7-d: 0.70;
+    --ring-8-d: 1;
   }
 
   * { box-sizing: border-box; }
@@ -79,32 +130,143 @@
   #vecOverlay { pointer-events: none; }
 
   /* ---------- Rainbow border frame ----------
-     Concentric square rings via stacked inset box-shadow: red outside
-     -> black separator -> yellow -> black -> green -> black -> blue ->
-     black -> purple inside. Each shadow is drawn inward from the box
-     edge by its own spread value; earlier shadows in the list paint on
-     top of later ones, so monotonically increasing spread produces
-     clean rings with zero corner miter (unlike border-image, every
-     corner is a plain intersection, rounded by border-radius below).
-     Fully calc()-driven off --band/--sep/--radius — vmin-based, so it
-     holds the same relative thickness at any window size or aspect
-     ratio, edge to edge, all the way around, with no JS. */
-  .rainbow-frame {
+     Concentric rings, red outside -> black separator -> yellow -> black
+     -> green -> black -> blue -> black -> purple inside. Same colors,
+     same thicknesses, same corner treatment as always.
+
+     WHY NINE ELEMENTS INSTEAD OF ONE: this used to be a single fixed div
+     carrying nine stacked inset box-shadows of monotonically increasing
+     spread. That is a genuinely tidier way to paint a static frame, and
+     it is the version that shipped for months. It has exactly one
+     limitation, and it turned out to be the one that mattered: a
+     box-shadow is not an element, so individual rings cannot be
+     transformed independently. The infinity-mirror effect is entirely
+     built out of moving each ring by a different amount, so the shadows
+     had to become real elements. If the tilt effect is ever removed,
+     collapsing this back into the old single-element rule is a clean
+     revert — nothing else in the codebase depends on the split.
+
+     WHAT HAD TO BE RECOMPUTED BY HAND: the old version got concentric
+     corners for free, because box-shadow spread on a rounded rect
+     automatically shrinks the inner radius as it moves inward. Nine
+     separate elements get no such favor, so each ring's radius is
+     explicitly its own inset subtracted from the outer --radius. That
+     keeps every corner truly concentric instead of nine identical
+     rounded rects nested inside each other, which reads as visibly wrong
+     at the corners even though the straight edges look fine. This is the
+     detail most likely to drift if --band/--sep/--radius are retuned —
+     the offsets below are all calc()-derived, so they follow
+     automatically, but it is worth an eyeball at the corners after any
+     change to those three variables.
+       One bound worth knowing: at the current values the innermost ring's
+     radius works out to 1.28vmin, comfortably positive. If --radius is
+     ever reduced below the total frame inset (6.72vmin), inner radii go
+     negative and the browser silently clamps them to 0, squaring off the
+     inner corners while the outer ones stay round.
+
+     PHYSICS/LAYOUT CONTRACT UNCHANGED: sand-bg.js's rainbowFrameInsetPx()
+     (colliders, floor-drain padding) and --frame-inset (palette and
+     contact-link positioning) both derive from --band/--sep, which are
+     untouched. The nine ring insets sum to exactly 5*band + 4*sep, which
+     is --frame-inset itself, so the invisible physics boundary and the
+     visible inner edge still agree to the pixel. Only the painting
+     changed, not the geometry.
+
+     NOTE ON THE TILT TRANSFORMS: translate() on a position:fixed element
+     moves it in real screen pixels, independent of the vmin-based sizing
+     — which is what we want here. --tilt-depth is therefore an absolute
+     px value and does not scale with viewport size the way the ring
+     thicknesses do. That is deliberate: the effect should feel like the
+     same physical amount of movement on a phone and on a desktop
+     monitor, not proportionally larger on a big screen. */
+  .ring {
     position: fixed;
-    inset: 0;
     pointer-events: none;
     z-index: 5;
+    will-change: transform;
+  }
+
+  /* Colored rings dim with depth. The black separators deliberately do
+     NOT: they are structural, not reflective — they are what makes each
+     colored band read as a distinct ring rather than a gradient. Fading
+     them toward transparent would let the sand sim show through the gaps
+     and muddy the whole frame, which is the opposite of the crisp
+     concentric look the border exists for. Dark stays dark at depth
+     anyway, so there is nothing physical being fudged here. */
+  .ring-color { opacity: calc(1 - var(--ring-fade) * var(--d)); }
+
+  .ring-0 {
+    --d: var(--ring-0-d);
+    inset: 0;
     border-radius: var(--radius);
-    box-shadow:
-      inset 0 0 0 var(--band) var(--c-red),
-      inset 0 0 0 calc(var(--band) + var(--sep)) black,
-      inset 0 0 0 calc(var(--band)*2 + var(--sep)) var(--c-yellow),
-      inset 0 0 0 calc(var(--band)*2 + var(--sep)*2) black,
-      inset 0 0 0 calc(var(--band)*3 + var(--sep)*2) var(--c-green),
-      inset 0 0 0 calc(var(--band)*3 + var(--sep)*3) black,
-      inset 0 0 0 calc(var(--band)*4 + var(--sep)*3) var(--c-blue),
-      inset 0 0 0 calc(var(--band)*4 + var(--sep)*4) black,
-      inset 0 0 0 calc(var(--band)*5 + var(--sep)*4) var(--c-purple);
+    box-shadow: inset 0 0 0 var(--band) var(--c-red);
+  }
+  .ring-1 {
+    --d: var(--ring-1-d);
+    inset: var(--band);
+    border-radius: calc(var(--radius) - var(--band));
+    box-shadow: inset 0 0 0 var(--sep) black;
+  }
+  .ring-2 {
+    --d: var(--ring-2-d);
+    inset: calc(var(--band) + var(--sep));
+    border-radius: calc(var(--radius) - var(--band) - var(--sep));
+    box-shadow: inset 0 0 0 var(--band) var(--c-yellow);
+  }
+  .ring-3 {
+    --d: var(--ring-3-d);
+    inset: calc(var(--band)*2 + var(--sep));
+    border-radius: calc(var(--radius) - var(--band)*2 - var(--sep));
+    box-shadow: inset 0 0 0 var(--sep) black;
+  }
+  .ring-4 {
+    --d: var(--ring-4-d);
+    inset: calc(var(--band)*2 + var(--sep)*2);
+    border-radius: calc(var(--radius) - var(--band)*2 - var(--sep)*2);
+    box-shadow: inset 0 0 0 var(--band) var(--c-green);
+  }
+  .ring-5 {
+    --d: var(--ring-5-d);
+    inset: calc(var(--band)*3 + var(--sep)*2);
+    border-radius: calc(var(--radius) - var(--band)*3 - var(--sep)*2);
+    box-shadow: inset 0 0 0 var(--sep) black;
+  }
+  .ring-6 {
+    --d: var(--ring-6-d);
+    inset: calc(var(--band)*3 + var(--sep)*3);
+    border-radius: calc(var(--radius) - var(--band)*3 - var(--sep)*3);
+    box-shadow: inset 0 0 0 var(--band) var(--c-blue);
+  }
+  .ring-7 {
+    --d: var(--ring-7-d);
+    inset: calc(var(--band)*4 + var(--sep)*3);
+    border-radius: calc(var(--radius) - var(--band)*4 - var(--sep)*3);
+    box-shadow: inset 0 0 0 var(--sep) black;
+  }
+  .ring-8 {
+    --d: var(--ring-8-d);
+    inset: calc(var(--band)*4 + var(--sep)*4);
+    border-radius: calc(var(--radius) - var(--band)*4 - var(--sep)*4);
+    box-shadow: inset 0 0 0 var(--band) var(--c-purple);
+  }
+
+  /* One rule drives all nine. Each ring reads its own --d, set in its
+     own class above, so the displacement math lives in exactly one
+     place rather than being repeated nine times with nine chances to
+     typo a multiplier. */
+  .ring {
+    transform: translate(
+      calc(var(--tilt-x) * var(--tilt-depth) * var(--d)),
+      calc(var(--tilt-y) * var(--tilt-depth) * var(--d))
+    );
+  }
+
+  /* tilt.js already pins --tilt-x/--tilt-y to 0 and never starts its
+     animation frame loop under reduced motion, so this is belt-and-
+     braces for the case where the vars are being driven by something
+     else, or a future consumer sets them directly. Costs nothing. */
+  @media (prefers-reduced-motion: reduce) {
+    .ring { transform: none !important; }
   }
 
   /* ---------- Carry-preview overlay ----------
@@ -307,13 +469,35 @@
     </h1>
   </div>
 
-  <div class="rainbow-frame"></div>
+  <!-- Rainbow frame: one element per ring, outermost first. The wrapper
+       carries the old .rainbow-frame class so anything that ever queried
+       for it still finds a node in the same place in the stacking order,
+       but it paints nothing itself — every visible pixel comes from the
+       nine .ring children. -->
+  <div class="rainbow-frame">
+    <div class="ring ring-color ring-0"></div>
+    <div class="ring ring-1"></div>
+    <div class="ring ring-color ring-2"></div>
+    <div class="ring ring-3"></div>
+    <div class="ring ring-color ring-4"></div>
+    <div class="ring ring-5"></div>
+    <div class="ring ring-color ring-6"></div>
+    <div class="ring ring-7"></div>
+    <div class="ring ring-color ring-8"></div>
+  </div>
 
   <a class="contact-link" href="mailto:theelectricrainbowcompany@proton.me">contact</a>
 
   <canvas id="carryOverlay"></canvas>
   <canvas id="carryGlow"></canvas>
 
+  <!-- Plain classic script, not a module: it has no imports, nothing
+       imports it, and it publishes its output as CSS custom properties
+       rather than as an export. Loading it before sand-bg.js means the
+       tilt vars are already live by the time the sim starts painting,
+       though nothing actually breaks if it loads late — the vars have
+       0 fallbacks declared in :root. -->
+  <script src="./js/tilt.js"></script>
   <script type="module" src="./js/sand-bg.js"></script>
 
 </body>
