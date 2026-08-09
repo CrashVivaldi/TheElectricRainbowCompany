@@ -49,8 +49,6 @@ const PALETTE = PALETTE_NAMES.map(name => {
 });
 let selectedMat = PALETTE[0].id;   // Sand, by default
 
-const STONE = MATS.findIndex(m => m.name === "Stone");
-if (STONE === -1) throw new Error("Stone not found in materials.js — has it been renamed?");
 const VOIDSTONE = MATS.findIndex(m => m.name === "Voidstone");
 if (VOIDSTONE === -1) throw new Error("Voidstone not found in materials.js — has it been renamed?");
 
@@ -87,17 +85,16 @@ camera.y = Math.floor(camera.y);
 
 // trySwap (physics.js) deletes material outright once it falls past the
 // world's bottom edge ("left the world top or bottom — gone") — there's
-// no natural floor at y=H. So this Stone floor isn't decorative, it's
-// the only thing stopping painted sand from vanishing... EXCEPT at
-// deliberate gaps: a hole is just an EMPTY cell left in the floor row.
-// Sand that lands there tries to sink one more row, hits y>=H, and
-// physics.js deletes it on the very next tick — no engine change
-// needed, confirmed by reading trySwap directly rather than assuming.
-// This is the drain mechanism for the live-sand cap below: holes bleed
-// off standing piles continuously instead of needing an active prune.
-// Edge holes are sized from the rainbow frame inset (see buildFloor);
-// center hole tracks the title width; both are rebuilt on resize.
-const FLOOR_EDGE_HOLE_SCALE = 0.88;   // slightly narrower than the border bands
+// no natural floor at y=H. This Voidstone floor is the only thing
+// stopping painted sand from vanishing.
+//   CORRECTION, this pass: the floor used to have deliberate gaps (a
+// hole is just an EMPTY cell in the floor row — sand that lands there
+// sinks one more row, hits y>=H, and physics.js deletes it next tick),
+// which doubled as a drain for the live-sand cap below. The floor is now
+// fully solid (see buildFloor) — there is no drain anymore. A visitor
+// who paints past MAX_LIVE_SAND simply can't paint more until reload;
+// see buildFloor's comment for why that's an accepted tradeoff and not
+// something this change tries to compensate for.
 const FLOOR_Y = H - 1;
 const floorCells = new Set();   // real indices actually placed as floor — NOT just "W of them", since holes mean it's fewer. Used below to keep the live-sand cap counting painted material only, not structural floor.
 
@@ -257,8 +254,8 @@ function placeMaterial(wx, wy) {
 const domColliderCells = new Set();
 
 // ---- STUDIO EDITOR — (re)classifies every non-empty grid cell by
-// material/position: STONE on the floor row -> floorCells, VOIDSTONE
-// anywhere -> domColliderCells (applyDomColliders() below only fills
+// material/position: VOIDSTONE on the floor row -> floorCells, VOIDSTONE
+// elsewhere -> domColliderCells (applyDomColliders() below only fills
 // EMPTY cells, so without this a reloaded page's old ledges would never
 // get cleaned up on resize), everything else -> assumed editor-placed
 // structure (editorCells), immune to visitor carry and exempt from
@@ -279,7 +276,11 @@ function reconstructTrackingSetsFromGrid() {
       const i = idx(x, y);
       const v = grid[i];
       if (v === EMPTY) continue;
-      if (y === FLOOR_Y && v === STONE) { floorCells.add(i); continue; }
+      // Floor is VOIDSTONE now (see buildFloor), same material the letter
+      // ledges use — this check has to run BEFORE the generic VOIDSTONE
+      // bucket below, or every floor cell in an imported/exported grid
+      // gets misclassified as a stale word-ledge on next load.
+      if (y === FLOOR_Y && v === VOIDSTONE) { floorCells.add(i); continue; }
       if (v === VOIDSTONE) { domColliderCells.add(i); continue; }
       editorCells.add(i);
     }
@@ -311,6 +312,18 @@ function purgeVoidstoneInFloorZone() {
     for (let x = 0; x < W; x++) {
       const i = idx(x, y);
       if (grid[i] !== VOIDSTONE) continue;
+      // The floor itself is now VOIDSTONE (see buildFloor) and lives in
+      // exactly this y-range, including FLOOR_Y. This function predates
+      // that change — it exists to clean up STALE WORD-LEDGES from an
+      // earlier resize, back when the only VOIDSTONE that could ever
+      // appear down here was leftover collider debris. Without this
+      // exemption it would delete the floor itself one call after
+      // buildFloor() paints it, every single applySiteLayout() pass.
+      //   floorCells is authoritative for "is this real floor" — it's
+      // rebuilt by buildFloor() immediately before this function runs
+      // (see applySiteLayout's call order), so it's always current by
+      // the time this check executes.
+      if (floorCells.has(i)) continue;
       grid[i] = EMPTY;
       domColliderCells.delete(i);
       wake(x, y);
@@ -322,21 +335,6 @@ function purgeVoidstoneInFloorZone() {
 // is. Independent of CELL_PX (that's screen pixels per cell, this is
 // world-space) — stays a small, thin strip regardless of grain size.
 const COLLIDER_LEDGE_THICKNESS = 1;
-
-// Inner edge of the rainbow border frame (matches index.html --frame-inset).
-function rainbowFrameInsetPx() {
-  const root = getComputedStyle(document.documentElement);
-  const vmin = Math.min(window.innerWidth, window.innerHeight) / 100;
-  const parseLen = (raw, fallback) => {
-    const val = (raw || fallback).trim();
-    if (val.endsWith("vmin")) return parseFloat(val) * vmin;
-    if (val.endsWith("px")) return parseFloat(val);
-    return parseFloat(val) * vmin;
-  };
-  const band = parseLen(root.getPropertyValue("--band"), "1vmin");
-  const sep = parseLen(root.getPropertyValue("--sep"), "0.43vmin");
-  return 5 * band + 4 * sep;
-}
 
 function applyDomColliders() {
   clearDomColliders();
@@ -372,22 +370,15 @@ function applyDomColliders() {
   }
 }
 
-function screenXToWorldX(screenX) {
-  const rect0 = canvases[0].getBoundingClientRect();
-  return camera.x + (screenX - rect0.left) / rect0.width * VIEW_W * camera.scale;
-}
-
-function edgeHoleWorldWidth() {
-  const insetPx = rainbowFrameInsetPx();
-  const rect0 = canvases[0].getBoundingClientRect();
-  if (!rect0.width) return 4;
-  const insetWorld = (insetPx / rect0.width) * VIEW_W * camera.scale;
-  return Math.max(2, Math.floor(insetWorld * FLOOR_EDGE_HOLE_SCALE));
-}
-
 function clearFloorRow() {
+  // Floor material is VOIDSTONE now, not STONE (see buildFloor) — matched
+  // against void-colored surroundings so it reads as a clean edge instead
+  // of a visible gray bar now that the sim renders in front of the
+  // rainbow frame. This check has to track that or a resize would fail
+  // to recognize the existing floor as floor, leaving it stuck forever
+  // instead of being torn down and rebuilt.
   for (const i of floorCells) {
-    if (grid[i] === STONE) {
+    if (grid[i] === VOIDSTONE) {
       grid[i] = EMPTY;
       wake(i % W, FLOOR_Y);
     }
@@ -395,54 +386,37 @@ function clearFloorRow() {
   floorCells.clear();
 }
 
-function mergeHoleRanges(ranges) {
-  const sorted = ranges.slice().sort((a, b) => a[0] - b[0]);
-  const merged = [];
-  for (const [a, b] of sorted) {
-    if (merged.length && a <= merged[merged.length - 1][1]) {
-      merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], b);
-    } else merged.push([a, b]);
-  }
-  return merged;
-}
-
-function updateFloorGapCss(titleRect) {
-  const pad = rainbowFrameInsetPx() * 0.3;
-  document.documentElement.style.setProperty("--floor-gap", `${titleRect.width + pad * 2}px`);
-}
-
+// CORRECTION, this pass: the floor used to have three holes cut into it —
+// a narrow drain at each screen edge, plus a THIRD hole under the
+// wordmark sized to the whole <h1>'s bounding box. That box's width is
+// its widest LINE (flex-column stacking means the box is as wide as
+// "Electric Rainbow Company", not "The"), horizontally centered by
+// .stage — so that third hole was wide enough to eat most of the floor's
+// middle, leaving only two thin strips of material near the edges. That
+// read as "two ledges with a pit in the middle," which is backwards from
+// the intent: the floor should be something sand rests on, not something
+// it falls through everywhere except two slivers.
+//   Fully solid now, no holes of any kind. Real consequence, not a bug:
+// this removes the site's only drain. The 18 rainbow materials have no
+// decay (a comment elsewhere in this file claims they do; they don't —
+// checked directly against materials.js, not assumed), so a visitor who
+// paints past MAX_LIVE_SAND simply can't paint any more for the rest of
+// that page load. Accepted tradeoff of "completely solid," not something
+// this change tries to compensate for.
 function buildFloor() {
   if (usingInitialGrid) return;
   clearFloorRow();
-  const edgeW = edgeHoleWorldWidth();
-  // Edge holes must line up with the SCREEN edges, not the world's true
-  // edges — the camera only ever shows a cropped middle slice of the
-  // wider world (camera.x .. camera.x+VIEW_W*camera.scale), so a hole
-  // placed at world x=0/W sits far outside anything visible. Floor rows
-  // outside the visible slice are unreachable anyway (painting/screen
-  // math only ever produces world coords inside it), so it's safe to
-  // only build floor within that range.
+  // Screen-edge bounds, not the world's true edges — the camera only
+  // ever shows a cropped middle slice of the wider world (camera.x ..
+  // camera.x+VIEW_W*camera.scale). Floor rows outside that slice are
+  // unreachable anyway (painting/screen math only ever produces world
+  // coords inside it), so it's safe to only build floor within it.
   const viewLeft = Math.floor(camera.x);
   const viewRight = Math.ceil(camera.x + VIEW_W * camera.scale);
-  const holes = [[viewLeft, viewLeft + edgeW], [viewRight - edgeW, viewRight]];
-
-  const title = document.querySelector(".stage h1");
-  if (title) {
-    const r = title.getBoundingClientRect();
-    holes.push([
-      Math.max(0, Math.floor(screenXToWorldX(r.left)) - 1),
-      Math.min(W, Math.ceil(screenXToWorldX(r.right)) + 1),
-    ]);
-    updateFloorGapCss(r);
-  }
-
-  const merged = mergeHoleRanges(holes);
-  const inHole = (x) => merged.some(([a, b]) => x >= a && x < b);
 
   for (let x = viewLeft; x < viewRight; x++) {
-    if (inHole(x)) continue;
     const i = idx(x, FLOOR_Y);
-    grid[i] = STONE;
+    grid[i] = VOIDSTONE;
     floorCells.add(i);
     wake(x, FLOOR_Y);
   }
@@ -451,6 +425,114 @@ function buildFloor() {
 function applySiteLayout() {
   buildFloor();
   applyDomColliders();
+  positionDrainButton();
+}
+
+// ---- DRAIN-AND-RESPAWN BUTTON ----
+// Ported from the Studio tool's own triggerSandReset, which never
+// shipped to the site — ONE real change on the way in, calibrated
+// timing, everything else works unmodified because the mechanism it
+// leans on (decay via MATS[VOIDSTONE].decay, unset decayTo already
+// falling back to EMPTY in physics.js's own decay pass, anyChunkAwake
+// for idle-polling) already exists in this file exactly as the studio
+// version expects it.
+//
+// TIMING, actually calibrated rather than reused: physics.js's decay
+// check is `Math.random() < M.decay`, evaluated PER CELL, PER TICK, at
+// 60 ticks/sec (TICK_MS above) — not per second. The studio's own
+// decay=0.08 computes out to 99% of the floor gone in under a second;
+// its own comment already flagged it as an untested placeholder ("fast
+// but visible — revisit once actually live"), and on the actual math
+// it reads as a flash cut, not a drain. 0.03 dissolves over roughly
+// 2.5 seconds — long enough to watch happen, still snappy.
+//
+// TWO ADDITIONS beyond the ported original, both flagged as such:
+//   - RESET_POST_DRAIN_PAUSE_MS: a deliberate held beat on a fully
+//     empty screen before respawning. The ported original respawns on
+//     the exact same frame the last cell finishes dissolving, which
+//     plays as a blink rather than a felt "then it respawns" moment.
+//   - RESET_COOLDOWN_MS: the button stays disabled for a few seconds
+//     after respawn completes. Not in the original (which had no UI
+//     wired up yet), but a public-facing button needs SOME guard
+//     against being mashed mid-animation or immediately re-triggered.
+const VOID_RESET_DECAY = 0.03;
+const RESET_POST_DRAIN_PAUSE_MS = 450;
+const RESET_COOLDOWN_MS = 4000;
+
+let resetInProgress = false;
+const drainBtn = document.getElementById("drainBtn");
+
+function setDrainBtnEnabled(enabled) {
+  if (!drainBtn) return;
+  drainBtn.disabled = !enabled;
+  drainBtn.classList.toggle("is-busy", !enabled);
+}
+
+function triggerSandReset() {
+  if (resetInProgress) return;
+  resetInProgress = true;
+  setDrainBtnEnabled(false);
+
+  // Decay is only evaluated in AWAKE chunks — floor/collider cells are
+  // static and never wake on their own, so cranking the decay rate alone
+  // would silently do nothing until something else happened to wake
+  // those chunks. Waking every one explicitly is what actually starts
+  // the dissolve.
+  for (const i of floorCells) wake(i % W, Math.floor(i / W));
+  for (const i of domColliderCells) wake(i % W, Math.floor(i / W));
+  MATS[VOIDSTONE].decay = VOID_RESET_DECAY;
+
+  function pollIdle() {
+    if (anyChunkAwake()) {
+      requestAnimationFrame(pollIdle);
+      return;
+    }
+    // Hard delete whatever's left (any orphaned mid-fall material, any
+    // decay debris) rather than trusting every last cell resolved
+    // itself naturally, then hold on the empty screen for a beat before
+    // respawning — see RESET_POST_DRAIN_PAUSE_MS above for why.
+    grid.fill(EMPTY);
+    floorCells.clear();
+    domColliderCells.clear();
+    editorCells.clear();
+    paintedCellCount = 0;
+    MATS[VOIDSTONE].decay = 0; // restore BEFORE rebuilding, or the fresh floor starts dissolving itself immediately
+
+    setTimeout(() => {
+      buildFloor();
+      applyDomColliders();
+      resetInProgress = false;
+      // Cooldown starts at RESPAWN, not at button-press — the whole
+      // drain-pause-respawn sequence already takes ~3 seconds; adding
+      // the cooldown on top of that (rather than overlapping it) is
+      // what actually guards against an immediate re-trigger.
+      setTimeout(() => setDrainBtnEnabled(true), RESET_COOLDOWN_MS);
+    }, RESET_POST_DRAIN_PAUSE_MS);
+  }
+  requestAnimationFrame(pollIdle);
+}
+
+if (drainBtn) {
+  drainBtn.addEventListener("click", triggerSandReset);
+}
+
+// Vertical midpoint between the contact link's bottom edge and the top
+// of "The" (the h1's first word, on its own line above the wider
+// subtitle) — both real, measured rects, not guessed constants, so this
+// stays correct across every screen size and through the async Monoton
+// font swap (see the document.fonts.ready hook below applySiteLayout is
+// already wired into). ".stage h1 > .solid-collider" is exactly one
+// element: "The" is the h1's first direct child span; the other three
+// words live one level deeper, inside .title-subline.
+function positionDrainButton() {
+  if (!drainBtn) return;
+  const contact = document.querySelector(".contact-link");
+  const theWord = document.querySelector(".stage h1 > .solid-collider");
+  if (!contact || !theWord) return;
+  const cRect = contact.getBoundingClientRect();
+  const tRect = theWord.getBoundingClientRect();
+  const midY = (cRect.bottom + tRect.top) / 2;
+  drainBtn.style.top = `${Math.round(midY - drainBtn.offsetHeight / 2)}px`;
 }
 
 // Brush radius scales with zoom — at 1 world-cell fixed radius, a dab

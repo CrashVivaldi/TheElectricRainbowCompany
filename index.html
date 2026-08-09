@@ -362,6 +362,62 @@
     pointer-events: auto;
     transition: box-shadow 0.12s;
   }
+  /* ---------- Drain button ----------
+     Position is intentionally NOT set here beyond a sane pre-JS default
+     (top). The real position is a measured midpoint between the contact
+     link's bottom edge and the top of "The" — see sand-bg.js's
+     positionDrainButton(), called from applySiteLayout() alongside the
+     floor/collider rebuild so it gets the exact same resize/orientation/
+     font-load triggers for free instead of a separate listener.
+       Styled as a quiet utility control (JetBrains Mono, --lilac, low
+     opacity) rather than the Monoton/shimmer treatment the wordmark and
+     contact link use — that treatment is this site's language for
+     BRAND identity, and a background-utility action button competing
+     for that same visual weight would read as a second logo, not a
+     tool. Matches the existing register .page-nav already establishes
+     for non-brand UI, just centered and circular instead of
+     top-left/text. */
+  .drain-btn {
+    position: fixed;
+    top: calc(var(--frame-inset) + 60px); /* pre-JS fallback only — positionDrainButton() overrides this within one frame of load */
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 12;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15px;
+    line-height: 1;
+    color: var(--lilac);
+    background: rgba(232, 223, 255, 0.06);
+    border: 1px solid rgba(232, 223, 255, 0.22);
+    opacity: 0.6;
+    cursor: pointer;
+    transition: opacity 0.15s, background 0.15s, transform 0.15s;
+  }
+  .drain-btn:hover:not(:disabled) {
+    opacity: 1;
+    background: rgba(232, 223, 255, 0.12);
+  }
+  .drain-btn:active:not(:disabled) {
+    transform: translateX(-50%) scale(0.92);
+  }
+  /* Disabled through both the drain/pause beat AND the post-respawn
+     cooldown (see sand-bg.js) — a single flat "unavailable" look for
+     the whole span rather than trying to visually distinguish two
+     states the visitor has no real reason to tell apart. */
+  .drain-btn:disabled,
+  .drain-btn.is-busy {
+    opacity: 0.25;
+    cursor: default;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .drain-btn { transition: none; }
+  }
 </style>
 </head>
 <body>
@@ -393,7 +449,9 @@
 
   <a class="contact-link" href="mailto:theelectricrainbowcompany@proton.me">contact</a>
 
-  <canvas id="carryOverlay"></canvas>
+  <button type="button" id="drainBtn" class="drain-btn" aria-label="Drain the sand and start fresh">⟳</button>
+
+  <canvas id="carryOverlay"></canvas></canvas>
   <canvas id="carryGlow"></canvas>
 
   <!-- Both plain classic scripts, not modules: neither has imports,
