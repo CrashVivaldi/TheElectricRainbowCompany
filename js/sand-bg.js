@@ -345,24 +345,6 @@ const COLLIDER_LEDGE_THICKNESS = 1;
 // the letter spacing itself. 1.0 = full bounding-box width (old behavior).
 const LEDGE_WIDTH_SCALE = 0.7;
 
-// Ledges sit above the letters rather than flush with them — this is how
-// many multiples of the LETTER'S OWN HEIGHT the ledge is lifted above its
-// top edge, so sand collects visibly above the wordmark instead of resting
-// directly on it. Scales with font size automatically since it's relative
-// to each element's own measured height, not a fixed pixel/vmin offset.
-const LEDGE_RAISE_MULT = 0.1;
-
-// ---- TEMPORARY DIAGNOSTIC — remove once the ledge-height bug is found.
-// Raw math says LEDGE_RAISE_MULT at its current value can only be moving
-// ledges a few px, nowhere near enough to explain ledges landing a full
-// line above their letters — so this isn't a tuning problem, it's a real
-// bug in the geometry somewhere above. Rather than guess more constants
-// blind, this dumps the actual measured numbers straight onto the screen
-// (not just console.log) since testing happens via phone screenshot, not
-// attached devtools. Flip to false and delete the block below it once
-// this is solved.
-const LEDGE_DEBUG = true;
-
 function applyDomColliders() {
   clearDomColliders();
   purgeVoidstoneInFloorZone();
@@ -373,35 +355,15 @@ function applyDomColliders() {
     return Math.ceil(camera.y + (screenY - rect0.top) / rect0.height * VIEW_H * camera.scale);
   }
 
-  // Inverse of screenYToWorldRow — converts a computed world row back to
-  // a screen Y, so the debug panel can show "the ledge will render at
-  // screen Y=___" directly comparable to where the letter visually sits,
-  // rather than an opaque world-row number.
-  function worldRowToScreenY(row) {
-    return rect0.top + (row - camera.y) / (VIEW_H * camera.scale) * rect0.height;
-  }
-
-  let debugLines = null;
-  if (LEDGE_DEBUG) {
-    debugLines = [
-      `rect0: top=${rect0.top.toFixed(1)} h=${rect0.height.toFixed(1)}`,
-      `camera.y=${camera.y} CELL_PX=${CELL_PX} VIEW_H=${VIEW_H}`,
-      `--`,
-    ];
-  }
-
-  function placeLedge(wx0, wx1, wyAnchor) {
-    // Bottom-anchored: wyAnchor is the row immediately BELOW the ledge
-    // (exclusive) — the ledge occupies [wyAnchor - thickness, wyAnchor),
-    // growing upward from that row. This is deliberate rather than
-    // top-anchored (growing downward from a fixed top row): the caller
-    // computes wyAnchor as a RAISED position above the letter, and a
-    // bottom anchor means COLLIDER_LEDGE_THICKNESS changes don't shift
-    // where the raise lands relative to the letter — only how thick the
-    // ledge reads.
-    const wy0 = wyAnchor - COLLIDER_LEDGE_THICKNESS;
+  function placeLedge(wx0, wx1, wyBottom) {
+    // Footing sits flush against the letter's own bottom edge — wyBottom
+    // is the world row at the letter's bottom (exclusive); the ledge
+    // occupies [wyBottom - thickness, wyBottom), growing upward from
+    // there so it reads as support directly under the glyph rather than
+    // floating above it.
+    const wy0 = wyBottom - COLLIDER_LEDGE_THICKNESS;
     if (wy0 >= FLOOR_LEDGE_ZONE_TOP) return;
-    for (let y = wy0; y < wyAnchor; y++) {
+    for (let y = wy0; y < wyBottom; y++) {
       for (let x = wx0; x < wx1; x++) {
         if (x < 0 || x >= W || y < 0 || y >= H) continue;
         const i = idx(x, y);
@@ -425,38 +387,7 @@ function applyDomColliders() {
     wx0 = Math.floor(center - narrowWidth / 2);
     wx1 = wx0 + narrowWidth;
 
-    // Letter height in world cells, using the same screen->world scale
-    // factor as the x/y conversions but as a pure delta (no camera offset,
-    // since it's a span not a position).
-    const worldHeight = r.height / rect0.height * VIEW_H * camera.scale;
-    const raise = Math.round(worldHeight * LEDGE_RAISE_MULT);
-
-    const baseRow = screenYToWorldRow(r.top);
-    const wyAnchor = baseRow - raise;
-    placeLedge(wx0, wx1, wyAnchor);
-
-    if (LEDGE_DEBUG) {
-      const backY = worldRowToScreenY(wyAnchor);
-      debugLines.push(
-        `${el.textContent}: top=${r.top.toFixed(1)} h=${r.height.toFixed(1)} ` +
-        `baseRow=${baseRow} raise=${raise} anchorRow=${wyAnchor} -> screenY=${backY.toFixed(1)}`
-      );
-    }
-  }
-
-  if (LEDGE_DEBUG) {
-    let panel = document.getElementById("ledgeDebugPanel");
-    if (!panel) {
-      panel = document.createElement("div");
-      panel.id = "ledgeDebugPanel";
-      panel.style.cssText =
-        "position:fixed; top:0; left:0; z-index:99999; max-width:100vw; " +
-        "max-height:60vh; overflow:auto; background:rgba(0,0,0,0.88); " +
-        "color:#4f4; font:9px/1.3 monospace; padding:6px; white-space:pre; " +
-        "pointer-events:none;";
-      document.body.appendChild(panel);
-    }
-    panel.textContent = debugLines.join("\n");
+    placeLedge(wx0, wx1, screenYToWorldRow(r.bottom));
   }
 }
 
