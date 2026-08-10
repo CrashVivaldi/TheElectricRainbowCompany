@@ -1022,11 +1022,23 @@ function loop(now) {
     forceRenderNextFrame = false;
   }
   wasAwakeLastCheck = awakeNow;
-  requestAnimationFrame(loop);
+  rafHandle = requestAnimationFrame(loop);
 }
 
 render();
-if (!reducedMotion) requestAnimationFrame(loop);
+let rafHandle = null;
+if (!reducedMotion) rafHandle = requestAnimationFrame(loop);
+
+// Pause the sim entirely when the tab is hidden — no physics, no render,
+// zero JS overhead. Resume the moment it becomes visible again.
+// Mirrors the same null-guard pattern tilt.js uses for its idle-stop.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    if (rafHandle !== null) { cancelAnimationFrame(rafHandle); rafHandle = null; }
+  } else {
+    if (!reducedMotion && rafHandle === null) rafHandle = requestAnimationFrame(loop);
+  }
+});
 
 // ---- palette UI: three groups (sands top-left, liquids top-right,
 // gases bottom-center), inset inside the rainbow frame via index.html CSS.
