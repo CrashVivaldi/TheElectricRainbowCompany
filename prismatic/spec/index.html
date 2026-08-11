@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Prismatic Image Format Specification — Electric Rainbow Company</title>
+<style>
+  :root {
+    --bg: #0f1012;
+    --surface: #17191d;
+    --border: #2a2d33;
+    --ink: #e8e4dc;
+    --muted: #9a958a;
+    --accent: #7ecfb3;
+    --code-bg: #1e2024;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { background: var(--bg); color: var(--ink); font-family: 'Georgia', serif; }
+  body { max-width: 740px; margin: 0 auto; padding: 60px 24px 120px; line-height: 1.7; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  header { margin-bottom: 56px; border-bottom: 1px solid var(--border); padding-bottom: 32px; }
+  header .eyebrow { font-family: ui-monospace, monospace; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); margin-bottom: 16px; }
+  header h1 { font-size: 28px; font-weight: normal; letter-spacing: -0.01em; margin-bottom: 20px; }
+  .meta-table { border-collapse: collapse; font-family: ui-monospace, monospace; font-size: 13px; }
+  .meta-table td { padding: 4px 20px 4px 0; color: var(--muted); }
+  .meta-table td:first-child { color: var(--ink); }
+  h2 { font-size: 18px; font-weight: normal; letter-spacing: -0.01em; margin: 48px 0 16px; padding-top: 48px; border-top: 1px solid var(--border); }
+  h3 { font-size: 12px; font-weight: normal; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin: 32px 0 12px; }
+  p { margin-bottom: 16px; }
+  ul, ol { margin: 0 0 16px 24px; }
+  li { margin-bottom: 6px; }
+  code { font-family: ui-monospace, monospace; font-size: 0.88em; background: var(--code-bg); border: 1px solid var(--border); border-radius: 3px; padding: 1px 5px; }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 20px 24px; overflow-x: auto; margin: 20px 0; font-family: ui-monospace, monospace; font-size: 13px; line-height: 1.6; color: #c9c5bd; }
+  pre code { background: none; border: none; padding: 0; font-size: inherit; }
+  .cm { color: #5a6070; }
+  table { border-collapse: collapse; width: 100%; margin: 20px 0; font-size: 14px; }
+  th { text-align: left; padding: 8px 16px 8px 0; border-bottom: 1px solid var(--border); color: var(--muted); font-weight: normal; font-family: ui-monospace, monospace; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+  td { padding: 10px 16px 10px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+  td:first-child { font-family: ui-monospace, monospace; font-size: 13px; }
+  .must { color: #e07b54; font-weight: bold; font-family: ui-monospace, monospace; font-size: 0.85em; }
+  .should { color: #d4b84a; font-weight: bold; font-family: ui-monospace, monospace; font-size: 0.85em; }
+  .may { color: var(--accent); font-weight: bold; font-family: ui-monospace, monospace; font-size: 0.85em; }
+  footer { margin-top: 80px; padding-top: 24px; border-top: 1px solid var(--border); font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="eyebrow">Electric Rainbow Company</div>
+  <h1>Prismatic Image Format Specification</h1>
+  <table class="meta-table">
+    <tr><td>Format name</td><td>Prismatic</td></tr>
+    <tr><td>Extension</td><td>.prsm</td></tr>
+    <tr><td>Proposed MIME type</td><td>application/vnd.prismatic</td></tr>
+    <tr><td>Current version</td><td>1</td></tr>
+    <tr><td>Schema URL</td><td><a href="https://theelectricrainbowcompany.com/schema/prsm/v1.json">theelectricrainbowcompany.com/schema/prsm/v1.json</a></td></tr>
+    <tr><td>Maintainer</td><td><a href="https://theelectricrainbowcompany.com">Electric Rainbow Company</a></td></tr>
+  </table>
+</header>
+
+<h2>1. Overview</h2>
+<p>A <code>.prsm</code> file is a holographic image container. It encodes a photograph or layered composition together with a depth map and rendering parameters sufficient to reproduce a tilt-reactive, iridescent holographic card effect in any conforming viewer.</p>
+<p>The file is a valid HTML document with a non-standard extension. Any web browser can open it without a plugin or OS-level file association. The renderer may be inlined in the file (self-contained mode) or loaded from a CDN via a <code>&lt;script&gt;</code> tag (linked mode). The image data and all rendering parameters are encoded in a manifest JSON block embedded in the document <code>&lt;head&gt;</code>.</p>
+<p>The format has two content types: <code>photo</code> (a single image with an associated depth map) and <code>diorama</code> (up to four transparent-PNG layers composited at independent depth values). Both types are rendered by the same engine using the same manifest schema.</p>
+
+<h2>2. File structure</h2>
+<p>A conforming <code>.prsm</code> file must be a valid HTML5 document containing exactly:</p>
+<ol>
+  <li>A <code>&lt;script type="application/json" id="prsm-manifest"&gt;</code> element in the <code>&lt;head&gt;</code> whose text content is the manifest JSON (see §3).</li>
+  <li>A <code>&lt;prismatic-card&gt;</code> custom element in the <code>&lt;body&gt;</code>.</li>
+  <li>A <code>&lt;script&gt;</code> element that defines the <code>prismatic-card</code> custom element — either inline (self-contained mode) or as a <code>src</code> reference (linked mode).</li>
+</ol>
+
+<h3>2.1 Self-contained mode</h3>
+<p>The engine script is inlined verbatim. The file opens and renders with no network access. This is the default output of the Prismatic authoring tool.</p>
+<pre><code>&lt;!DOCTYPE html&gt;
+&lt;html lang="en"&gt;
+&lt;head&gt;
+  &lt;meta charset="UTF-8"&gt;
+  &lt;script type="application/json" id="prsm-manifest"&gt;
+    { ...manifest JSON... }
+  &lt;/script&gt;
+&lt;/head&gt;
+&lt;body&gt;
+  &lt;prismatic-card&gt;&lt;/prismatic-card&gt;
+  &lt;script&gt;/* prismatic.js inlined */&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;</code></pre>
+
+<h3>2.2 Linked mode</h3>
+<p>The engine is loaded from a URL. Linked-mode files are not self-contained and may fail to render offline.</p>
+<pre><code>&lt;prismatic-card&gt;&lt;/prismatic-card&gt;
+&lt;script src="https://theelectricrainbowcompany.com/prismatic.js"&gt;&lt;/script&gt;</code></pre>
+
+<h3>2.3 Prohibited patterns</h3>
+<p>A <code>.prsm</code> file <span class="must">MUST NOT</span> contain a literal <code>&lt;/script&gt;</code> inside any <code>&lt;script&gt;</code> element's text content. The sequence must be escaped as <code>\u003c/script&gt;</code>.</p>
+
+<h2>3. Manifest schema</h2>
+<p>The manifest is a UTF-8 JSON object. Unknown keys <span class="must">MUST</span> be ignored by conforming readers. All fields are optional except <code>version</code> and <code>type</code>.</p>
+
+<pre><code>{
+  "$schema": "https://theelectricrainbowcompany.com/schema/prsm/v1.json",
+  "version": 1,               <span class="cm">// integer, required</span>
+  "type": "photo",            <span class="cm">// string, required — "photo" | "diorama"</span>
+  "title": "Untitled",
+
+  "photo": {
+    "src": null,              <span class="cm">// string | null — base64 JPEG data URL</span>
+    "depth": null,            <span class="cm">// string | null — base64 JPEG data URL</span>
+    "depthMode": "custom"     <span class="cm">// "custom" | "heuristic" | "auto"</span>
+  },
+
+  "diorama": {
+    "layers": [               <span class="cm">// 0–4 objects, back-to-front</span>
+      {
+        "src": null,          <span class="cm">// string | null — base64 PNG data URL</span>
+        "depth": 0.0,         <span class="cm">// [-1.0, 1.0]  negative=near, positive=far</span>
+        "opacity": 1.0        <span class="cm">// [0.0, 1.0]</span>
+      }
+    ],
+    "strength": 70            <span class="cm">// [0, 100]</span>
+  },
+
+  "foil": {
+    "style": "spectrum",      <span class="cm">// "spectrum" | "mono"</span>
+    "hue": 140,               <span class="cm">// [0, 360]  base hue in degrees (mono only)</span>
+    "grain": 0.45,            <span class="cm">// [0.0, 1.0]  per-facet grain (mono only)</span>
+    "opacity": 0.45,          <span class="cm">// [0.0, 1.0]</span>
+    "sparkle": 0.7,           <span class="cm">// [0.0, 2.0]</span>
+    "size": 16,               <span class="cm">// [10, 28]  logical pixels</span>
+    "facetType": "diamond"    <span class="cm">// "diamond" | "hex" | "prism" | "flecks"</span>
+  },
+
+  "effects": {
+    "strength": 0.18,         <span class="cm">// [0.0, 1.0]  parallax displacement</span>
+    "focus": 0.5,             <span class="cm">// [0.0, 1.0]  depth focal plane</span>
+    "edge": 0.18,             <span class="cm">// [0.0, 1.0]  edge-fill softness</span>
+    "blur": 0.0,              <span class="cm">// [0.0, 1.0]  depth-of-field</span>
+    "brightness": 1.0,        <span class="cm">// [0.4, 1.8]</span>
+    "saturation": 1.0,        <span class="cm">// [0.0, 2.0]</span>
+    "tintHue": 190,           <span class="cm">// [0, 360]</span>
+    "tintAmount": 0.0,        <span class="cm">// [0.0, 1.0]</span>
+    "chromAb": 0.0,           <span class="cm">// [0.0, 1.0]  chromatic aberration</span>
+    "vignette": 0.3,          <span class="cm">// [0.0, 1.0]</span>
+    "grain": 0.04,            <span class="cm">// [0.0, 1.0]  animated film grain</span>
+    "photoOpacity": 1.0,      <span class="cm">// [0.0, 1.0]</span>
+    "invertDepth": false,
+    "wrapTilt": false,        <span class="cm">// sine-wrap tilt input</span>
+    "stretchToFit": true,     <span class="cm">// true=stretch, false=crop-to-fill</span>
+    "photoFoil": true,
+    "borderFoil": true,
+    "borderSparkle": 0.6,     <span class="cm">// [0.0, 2.0]</span>
+    "borderSize": 16          <span class="cm">// [10, 28]</span>
+  },
+
+  "tilt": {
+    "rotAmt": 10,             <span class="cm">// [0, 30]  CSS 3D rotation in degrees</span>
+    "gyroSens": 1.0,          <span class="cm">// [0.5, 2.0]</span>
+    "invertX": false,
+    "invertY": false
+  }
+}</code></pre>
+
+<h3>3.1 Type semantics</h3>
+<p>When <code>type</code> is <code>"photo"</code>, a conforming reader <span class="must">MUST</span> use <code>photo.src</code> as the primary image and <code>photo.depth</code> as the depth map. If <code>photo.depth</code> is null, the reader generates depth according to <code>photo.depthMode</code>.</p>
+<p>When <code>type</code> is <code>"diorama"</code>, a conforming reader <span class="must">MUST</span> composite <code>diorama.layers</code> back-to-front into a single image and depth map before rendering, using each layer's alpha channel for occlusion. If no layers have image data, the reader <span class="may">MAY</span> fall back to <code>photo.src</code>.</p>
+<p>Both sections <span class="must">MUST</span> be present in the manifest regardless of <code>type</code>, allowing a viewer to switch modes on a received file.</p>
+
+<h3>3.2 Image data encoding</h3>
+<p>All image data <span class="must">MUST</span> be encoded as RFC 2397 data URLs. Photo and depth <span class="must">MUST</span> be JPEG. Diorama layers <span class="must">MUST</span> be PNG (alpha channel required). Readers <span class="should">SHOULD</span> accept either format for forward compatibility.</p>
+
+<h3>3.3 Depth map conventions</h3>
+<p>Grayscale image, R channel used. White (1.0) = near; black (0.0) = far. May be inverted via <code>effects.invertDepth</code>. If depth dimensions differ from the photo, readers <span class="must">MUST</span> scale using cover-fit geometry.</p>
+
+<h3>3.4 Version negotiation</h3>
+<p>Readers encountering <code>version &gt; 1</code> <span class="should">SHOULD</span> warn and render using known fields. Readers encountering <code>version &lt; 1</code> or a missing version <span class="must">MUST</span> treat the file as version 1.</p>
+
+<h2>4. Renderer requirements</h2>
+<p>A conforming renderer <span class="must">MUST</span>:</p>
+<ul>
+  <li>Read the manifest from <code>#prsm-manifest</code> in the host document.</li>
+  <li>Ignore unknown manifest keys without erroring.</li>
+  <li>Support both <code>"photo"</code> and <code>"diorama"</code> content types.</li>
+  <li>Support gyroscope input via <code>DeviceOrientationEvent</code>, behind a user permission prompt where required (currently iOS).</li>
+  <li>Request gyroscope permission only after explicit user interaction.</li>
+  <li>Honor <code>prefers-reduced-motion</code> by disabling tilt animation when set.</li>
+</ul>
+<p>A conforming renderer <span class="should">SHOULD</span>:</p>
+<ul>
+  <li>Support mouse/pointer tilt on non-touch devices.</li>
+  <li>Lerp tilt toward target for smooth movement (reference: 0.14 factor per frame at 60 fps).</li>
+  <li>Render the border foil frame when <code>effects.borderFoil</code> is true.</li>
+  <li>Support all four <code>foil.facetType</code> values.</li>
+</ul>
+<p>A conforming renderer <span class="may">MAY</span>:</p>
+<ul>
+  <li>Omit depth-of-field blur if the environment does not support it.</li>
+  <li>Fall back to a flat render if WebGL is unavailable.</li>
+</ul>
+
+<h2>5. Security considerations</h2>
+<p><code>.prsm</code> files are HTML documents subject to standard browser security policies. Authoring tools <span class="should">SHOULD</span> cap source images at 1280px (photos) and 1024px (diorama layers) before encoding. Authoring tools <span class="must">MUST</span> escape <code>&lt;/script&gt;</code> within manifest JSON as <code>\u003c/script&gt;</code>. Self-contained files have no external dependencies and are safe to share as attachments.</p>
+
+<h2>6. File identification</h2>
+<table>
+  <tr><th>Property</th><th>Value</th></tr>
+  <tr><td>Extension</td><td>.prsm</td></tr>
+  <tr><td>Proposed MIME type</td><td>application/vnd.prismatic</td></tr>
+  <tr><td>Magic bytes</td><td>None (valid HTML document)</td></tr>
+  <tr><td>Encoding</td><td>UTF-8</td></tr>
+  <tr><td>Compression</td><td>None at container level; payloads are JPEG/PNG</td></tr>
+</table>
+<p>Identification by extension is the primary mechanism. A future binary container format could introduce magic bytes; this specification does not define one.</p>
+
+<h2>7. Changelog</h2>
+<table>
+  <tr><th>Version</th><th>Date</th><th>Notes</th></tr>
+  <tr><td>1</td><td>2026</td><td>Initial specification</td></tr>
+</table>
+
+<footer>
+  <p>Prismatic Image Format Specification · Electric Rainbow Company · <a href="https://theelectricrainbowcompany.com">theelectricrainbowcompany.com</a></p>
+</footer>
+
+</body>
+</html>

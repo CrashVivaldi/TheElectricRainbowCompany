@@ -1,0 +1,325 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://theelectricrainbowcompany.com/schema/prsm/v1.json",
+  "title": "Prismatic (.prsm) manifest",
+  "description": "Schema for the embedded JSON manifest in a .prsm holographic image file. See https://theelectricrainbowcompany.com for the full format specification.",
+  "type": "object",
+  "required": ["version", "type"],
+  "additionalProperties": true,
+
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri"
+    },
+
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Format version. Must be 1 for files conforming to this specification."
+    },
+
+    "type": {
+      "type": "string",
+      "enum": ["photo", "diorama"],
+      "description": "Content type. 'photo': single image with depth map. 'diorama': up to four composited layers at independent depths."
+    },
+
+    "title": {
+      "type": "string",
+      "maxLength": 60,
+      "default": "Untitled",
+      "description": "Human-readable display name for the card."
+    },
+
+    "photo": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Primary image data. Present in all files regardless of type.",
+      "properties": {
+        "src": {
+          "oneOf": [
+            { "type": "string", "pattern": "^data:image/(jpeg|png);base64," },
+            { "type": "null" }
+          ],
+          "default": null,
+          "description": "Base64 JPEG data URL of the photo. JPEG required for writers; readers SHOULD accept PNG."
+        },
+        "depth": {
+          "oneOf": [
+            { "type": "string", "pattern": "^data:image/(jpeg|png);base64," },
+            { "type": "null" }
+          ],
+          "default": null,
+          "description": "Base64 JPEG data URL of the depth map. Grayscale; white=near, black=far."
+        },
+        "depthMode": {
+          "type": "string",
+          "enum": ["custom", "heuristic", "auto"],
+          "default": "custom",
+          "description": "How to obtain depth if photo.depth is null. 'custom': pre-baked in photo.depth. 'heuristic': CPU-based estimation. 'auto': ML depth estimation."
+        }
+      }
+    },
+
+    "diorama": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Layered composition data. Present in all files regardless of type.",
+      "properties": {
+        "layers": {
+          "type": "array",
+          "maxItems": 4,
+          "default": [],
+          "description": "Ordered back-to-front (index 0 = furthest). Each layer's alpha channel determines occlusion of layers behind it.",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "src": {
+                "oneOf": [
+                  { "type": "string", "pattern": "^data:image/png;base64," },
+                  { "type": "null" }
+                ],
+                "default": null,
+                "description": "Base64 PNG data URL. Must be PNG — alpha channel required for occlusion."
+              },
+              "depth": {
+                "type": "number",
+                "minimum": -1.0,
+                "maximum": 1.0,
+                "default": 0.0,
+                "description": "Depth of this layer. Negative = closer to viewer, positive = further."
+              },
+              "opacity": {
+                "type": "number",
+                "minimum": 0.0,
+                "maximum": 1.0,
+                "default": 1.0
+              }
+            }
+          }
+        },
+        "strength": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "default": 70,
+          "description": "Overall depth scale for the diorama composite."
+        }
+      }
+    },
+
+    "foil": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Holographic foil rendering parameters.",
+      "properties": {
+        "style": {
+          "type": "string",
+          "enum": ["spectrum", "mono"],
+          "default": "spectrum",
+          "description": "'spectrum': rainbow hue-cycling foil (diffraction grating look). 'mono': single-hue foil (vintage laser-etched sticker look)."
+        },
+        "hue": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 360,
+          "default": 140,
+          "description": "Base hue in degrees. Used in mono mode only."
+        },
+        "grain": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.45,
+          "description": "Per-facet grain amount. Used in mono mode only. Seeded off cell coordinates — reads as physical texture, not animation."
+        },
+        "opacity": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.45,
+          "description": "Foil layer opacity over the photo."
+        },
+        "sparkle": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 2.0,
+          "default": 0.7,
+          "description": "Specular intensity exponent."
+        },
+        "size": {
+          "type": "number",
+          "minimum": 10,
+          "maximum": 28,
+          "default": 16,
+          "description": "Facet size in logical pixels."
+        },
+        "facetType": {
+          "type": "string",
+          "enum": ["diamond", "hex", "prism", "flecks"],
+          "default": "diamond",
+          "description": "Lattice geometry for foil facets."
+        }
+      }
+    },
+
+    "effects": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Post-processing and rendering effect parameters.",
+      "properties": {
+        "strength": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.18,
+          "description": "Parallax displacement amount."
+        },
+        "focus": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.5,
+          "description": "Depth value of the focal plane (zero-displacement point)."
+        },
+        "edge": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.18,
+          "description": "Softness of edge fill when parallax pushes pixels outside the frame."
+        },
+        "blur": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.0,
+          "description": "Depth-of-field blur amount."
+        },
+        "brightness": {
+          "type": "number",
+          "minimum": 0.4,
+          "maximum": 1.8,
+          "default": 1.0
+        },
+        "saturation": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 2.0,
+          "default": 1.0
+        },
+        "tintHue": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 360,
+          "default": 190,
+          "description": "Hue of the color tint in degrees."
+        },
+        "tintAmount": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.0,
+          "description": "Strength of the color tint. 0 = no tint."
+        },
+        "chromAb": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.0,
+          "description": "Chromatic aberration. R and B channels are sampled with a tilt-proportional offset."
+        },
+        "vignette": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.3
+        },
+        "grain": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.04,
+          "description": "Animated film grain. Seeded with time — flickers per-frame."
+        },
+        "photoOpacity": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 1.0
+        },
+        "invertDepth": {
+          "type": "boolean",
+          "default": false,
+          "description": "Invert the depth map before rendering."
+        },
+        "wrapTilt": {
+          "type": "boolean",
+          "default": false,
+          "description": "Apply sine-wrap to tilt input for a continuous looping motion."
+        },
+        "stretchToFit": {
+          "type": "boolean",
+          "default": true,
+          "description": "true = stretch photo to fill canvas; false = crop-to-fill maintaining aspect ratio."
+        },
+        "photoFoil": {
+          "type": "boolean",
+          "default": true,
+          "description": "Render the holographic foil layer over the photo."
+        },
+        "borderFoil": {
+          "type": "boolean",
+          "default": true,
+          "description": "Render the holographic foil border frame."
+        },
+        "borderSparkle": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 2.0,
+          "default": 0.6,
+          "description": "Sparkle intensity for the border foil. Defaults to foil.sparkle if omitted."
+        },
+        "borderSize": {
+          "type": "number",
+          "minimum": 10,
+          "maximum": 28,
+          "default": 16,
+          "description": "Facet size for the border foil in logical pixels. Defaults to foil.size if omitted."
+        }
+      }
+    },
+
+    "tilt": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Tilt and gyroscope input parameters.",
+      "properties": {
+        "rotAmt": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 30,
+          "default": 10,
+          "description": "CSS 3D rotation amount in degrees at maximum tilt."
+        },
+        "gyroSens": {
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 2.0,
+          "default": 1.0,
+          "description": "Gyroscope sensitivity multiplier."
+        },
+        "invertX": {
+          "type": "boolean",
+          "default": false
+        },
+        "invertY": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    }
+  }
+}
