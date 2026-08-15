@@ -1,0 +1,570 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cosmophone</title>
+<meta name="description" content="A theremin that lives in your browser. Four ways to play, a constellation sequencer, and ten voices named by someone who cannot hear them.">
+<link rel="stylesheet" href="fonts.css">
+<style>
+:root{
+  /* Palette lifted from the instrument's own faceplate */
+  --void:#0b0810;
+  --void-2:#120c18;
+  --ink:#1a1410;
+  --panel:#241b12;
+  --brass:#b8860b;
+  --brass-lt:#e8c170;
+  --gold:#ffcc44;
+  --violet:#7d4fbf;
+  --violet-lt:#b07fe8;
+  --sage:#71a39f;
+  --red-lt:#e8604f;
+  --paper:#e8dcc4;
+  --paper-dim:#a2917a;
+  --paper-faint:#6f6353;
+
+  --display:'Poiret One',sans-serif;
+  --deco:'Cinzel',serif;
+  --body:'Cormorant Garamond',serif;
+  --mono:'Share Tech Mono',ui-monospace,monospace;
+
+  --col:min(1180px,100% - 2.5rem);
+  --measure:62ch;
+}
+
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;
+  background:var(--void);
+  color:var(--paper);
+  font-family:var(--body);
+  font-size:clamp(17px,1.05vw + 14px,20px);
+  line-height:1.65;
+  overflow-x:hidden;
+}
+body::before{
+  /* faint aether wash, fixed behind everything */
+  content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(ellipse 70% 50% at 50% 0%, #2a1d3a55 0%, transparent 70%),
+    radial-gradient(ellipse 60% 40% at 50% 100%, #1a122655 0%, transparent 70%);
+}
+main,header,footer{position:relative;z-index:1}
+
+a{color:var(--gold);text-decoration-color:#ffcc4455;text-underline-offset:3px}
+a:hover{color:var(--brass-lt)}
+:focus-visible{outline:2px solid var(--gold);outline-offset:3px}
+img{max-width:100%;display:block}
+
+.wrap{width:var(--col);margin-inline:auto}
+
+/* ── rules & labels ─────────────────────────────────────────── */
+.rule{height:2px;background:linear-gradient(90deg,transparent,var(--brass)55,var(--brass),var(--brass)55,transparent);border:0;margin:0}
+.eyebrow{
+  font-family:var(--mono);font-size:.72rem;letter-spacing:.28em;text-transform:uppercase;
+  color:var(--brass);margin:0 0 .6rem
+}
+
+/* ── hero ───────────────────────────────────────────────────── */
+.hero{position:relative;padding:clamp(3rem,9vh,6rem) 0 clamp(2.5rem,6vh,4rem);text-align:center;overflow:hidden}
+#facets{position:absolute;inset:0;width:100%;height:100%;z-index:0;opacity:.6}
+.hero .wrap{position:relative;z-index:1}
+.wordmark{
+  font-family:var(--display);font-weight:400;
+  font-size:clamp(2rem,9.2vw,6.5rem);line-height:1;margin:0;
+  letter-spacing:clamp(2px,1.4vw,16px);text-indent:clamp(2px,1.4vw,16px);
+  background:linear-gradient(180deg,#fff2c4 0%,var(--gold) 42%,var(--brass) 72%,#6b4e0a 100%);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+  filter:drop-shadow(0 2px 10px #000e) drop-shadow(0 0 34px #ffcc4455);
+}
+.tagline{
+  font-family:var(--mono);font-size:clamp(.66rem,2vw,.8rem);letter-spacing:.32em;
+  text-transform:uppercase;color:var(--sage);margin:1.1rem auto 0;max-width:none;
+  text-shadow:0 0 14px #71a39f66;
+}
+.lede{
+  font-size:clamp(1.15rem,1vw + 1rem,1.5rem);line-height:1.5;color:var(--paper);
+  max-width:34ch;margin:1.8rem auto 0;text-wrap:balance;
+}
+.cta{
+  display:inline-block;margin-top:2rem;
+  font-family:var(--deco);font-weight:600;font-size:.95rem;letter-spacing:.16em;
+  text-transform:uppercase;text-decoration:none;color:#1a1208;
+  padding:.85rem 2rem;border:2px solid var(--gold);border-radius:4px;
+  background:linear-gradient(180deg,var(--brass-lt),var(--brass));
+  box-shadow:0 0 22px #ffcc4433, inset 0 1px 0 #fff6;
+  transition:transform .15s ease, box-shadow .15s ease;
+}
+.cta:hover{color:#1a1208;transform:translateY(-1px);box-shadow:0 0 30px #ffcc4455, inset 0 1px 0 #fff8}
+
+/* ── disclosure ─────────────────────────────────────────────── */
+.disclosure{
+  width:var(--col);margin:clamp(2rem,6vh,3.5rem) auto 0;
+  border-top:1px solid #b8860b33;border-bottom:1px solid #b8860b33;
+  padding:1.1rem 0;
+}
+.disclosure p{
+  font-family:var(--mono);font-size:.78rem;line-height:1.8;letter-spacing:.02em;
+  color:var(--paper-dim);margin:0;max-width:78ch;
+}
+
+/* ── sections ───────────────────────────────────────────────── */
+section{padding:clamp(3.5rem,9vh,6rem) 0}
+h2{
+  font-family:var(--deco);font-weight:600;
+  font-size:clamp(1.5rem,3.4vw,2.3rem);line-height:1.15;
+  letter-spacing:.06em;text-transform:uppercase;color:var(--brass-lt);
+  margin:0 0 1.2rem;text-wrap:balance;
+}
+h3{
+  font-family:var(--deco);font-weight:600;font-size:1.12rem;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--gold);margin:0 0 .5rem;
+}
+p{margin:0 0 1.05rem;max-width:var(--measure)}
+p:last-child{margin-bottom:0}
+strong{color:var(--brass-lt);font-weight:600}
+
+/* ── plates: screenshot beside prose ────────────────────────── */
+.plate{display:grid;gap:clamp(1.8rem,4vw,3.5rem);align-items:center}
+@media(min-width:820px){
+  .plate{grid-template-columns:minmax(0,300px) minmax(0,1fr)}
+  .plate.flip{grid-template-columns:minmax(0,1fr) minmax(0,300px)}
+  .plate.flip .shot{order:2}
+}
+.plate + .plate{margin-top:clamp(3rem,7vh,5rem)}
+
+.shot{margin:0}
+.shot img{
+  width:100%;height:auto;border:2px solid var(--brass);border-radius:8px;
+  box-shadow:0 12px 42px #000c, 0 0 30px #b8860b22, inset 0 1px 0 #e8c17055;
+  background:var(--void);
+}
+.shot figcaption{
+  font-family:var(--mono);font-size:.7rem;letter-spacing:.2em;text-transform:uppercase;
+  color:var(--paper-faint);margin-top:.7rem;text-align:center;
+}
+
+/* ── dictation blocks (the inventor speaking) ───────────────── */
+.dictation{
+  margin:1.6rem 0 0;padding:1.3rem 0 1.3rem 1.5rem;max-width:70ch;
+  border-left:3px double var(--brass);
+  background:linear-gradient(90deg,#b8860b0d,transparent 60%);
+}
+.dictation .who{
+  display:block;font-family:var(--mono);font-size:.68rem;letter-spacing:.24em;
+  text-transform:uppercase;color:var(--brass);margin-bottom:.9rem;
+}
+.dictation p{
+  font-family:var(--mono);font-size:.86rem;line-height:1.95;color:var(--paper-dim);
+  max-width:none;margin:0 0 .95rem;
+}
+.dictation p:last-child{margin-bottom:0}
+.dictation em{color:var(--brass-lt);font-style:normal;letter-spacing:.04em}
+/* the transcripts loosen as the night wears on */
+.dictation.late p{letter-spacing:.045em;line-height:2.1;color:var(--paper-faint)}
+.dictation.latest p{letter-spacing:.075em;line-height:2.25;color:var(--paper-faint)}
+.dictation.latest .who{color:var(--red-lt)}
+
+/* ── star colour key ────────────────────────────────────────── */
+.stars{list-style:none;padding:0;margin:1.4rem 0 0;display:grid;gap:.7rem;max-width:var(--measure)}
+.stars li{display:flex;gap:.85rem;align-items:baseline;font-size:.98rem;color:var(--paper-dim)}
+.dot{
+  width:11px;height:11px;border-radius:50%;flex:0 0 auto;
+  transform:translateY(1px);box-shadow:0 0 8px currentColor;background:currentColor;
+}
+.stars b{color:var(--paper);font-weight:600;font-family:var(--deco);
+  font-size:.82rem;letter-spacing:.12em;text-transform:uppercase}
+
+/* ── voice preset chips ─────────────────────────────────────── */
+.presets{display:flex;flex-wrap:wrap;gap:.5rem;margin:1.4rem 0 0;padding:0;list-style:none}
+.presets li{
+  font-family:var(--deco);font-weight:600;font-size:.76rem;letter-spacing:.14em;
+  color:var(--brass-lt);padding:.42rem .8rem;border:1px solid #b8860b66;border-radius:3px;
+  background:linear-gradient(180deg,#2a1f13,#1a120a);
+}
+
+/* ── spec table ─────────────────────────────────────────────── */
+.specs-wrap{overflow-x:auto;max-width:820px}
+table{border-collapse:collapse;width:100%;min-width:460px;font-family:var(--mono);font-size:.82rem}
+caption{
+  font-family:var(--mono);font-size:.7rem;letter-spacing:.24em;text-transform:uppercase;
+  color:var(--brass);text-align:left;padding-bottom:.9rem;
+}
+th,td{text-align:left;padding:.7rem .9rem;border-bottom:1px solid #b8860b26;vertical-align:top}
+th{color:var(--paper-faint);font-weight:400;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;width:38%}
+td{color:var(--paper);font-variant-numeric:tabular-nums}
+
+/* ── tagline reel ───────────────────────────────────────────── */
+.reel{margin-top:1.4rem;padding:0;list-style:none;display:grid;gap:.45rem}
+.reel li{
+  font-family:var(--mono);font-size:.78rem;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--paper-faint);
+}
+.reel li::before{content:"— ";color:var(--brass)}
+
+/* ── footer ─────────────────────────────────────────────────── */
+footer{padding:clamp(3rem,7vh,4.5rem) 0 4rem;border-top:1px solid #b8860b33}
+footer p{font-family:var(--mono);font-size:.76rem;line-height:1.9;color:var(--paper-faint);max-width:64ch}
+.sig{font-family:var(--display);font-size:1.5rem;letter-spacing:.3em;color:var(--brass);margin:0 0 1.2rem}
+
+@media(prefers-reduced-motion:reduce){
+  *{animation:none!important;transition:none!important}
+}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <canvas id="facets" aria-hidden="true"></canvas>
+  <div class="wrap">
+    <h1 class="wordmark">COSMOPHONE</h1>
+    <p class="tagline">Vacuum Tubes Not Included</p>
+    <p class="lede">A theremin that lives in your browser. Drag a finger through the dark and it sings. Let go and it stops.</p>
+    <!-- Swap this URL for the live Cosmophone deploy when there is one. -->
+    <a class="cta" href="https://github.com/CrashVivaldi/Cosmophone">Open the instrument</a>
+  </div>
+</header>
+
+<div class="disclosure">
+  <div class="wrap">
+    <p>A note on this page. It was assembled by something that can see Cosmophone in perfect detail and has never once heard it. Everything below concerning the <em>look</em> of the instrument is first-hand. Everything concerning the <em>sound</em> was dictated by the inventor, who is very old, and who has been left largely uncorrected.</p>
+  </div>
+</div>
+
+<main>
+
+<section>
+  <div class="wrap">
+    <div class="plate">
+      <figure class="shot">
+        <img src="shots/splash.jpg" alt="Cosmophone's startup screen: a brass-bordered card showing a constellation over pink and teal clouds, with the wordmark beneath it." width="860" height="1720" loading="lazy">
+        <figcaption>Cold start</figcaption>
+      </figure>
+      <div>
+        <p class="eyebrow">The faceplate</p>
+        <h2>An instrument that fits in a browser tab</h2>
+        <p>No install, no plugin, no audio interface. Cosmophone opens, warms up for three seconds behind a splash card, and waits for you to throw the power switch. It is built for a phone held in one hand — the play field runs the full height of the screen and every control sits under a thumb.</p>
+        <p>Three octaves, C3 to C6. Brass everywhere, because the whole thing is dressed as a piece of equipment that should have needed a cabinet, a mains lead, and a licence.</p>
+        <p>The splash card rotates through a different tagline every time it loads. There are eleven. Some are advice.</p>
+        <ul class="reel">
+          <li>A Modern Theremin for the Modern Luddite</li>
+          <li>Thanks for the Aether</li>
+          <li>You're Annoying Your Sister</li>
+          <li>Now With Exactly the Same Amount of AI as Before</li>
+          <li>Bela Lugosi Lives</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="rule">
+
+<section>
+  <div class="wrap">
+    <p class="eyebrow">Four ways to play</p>
+    <h2>The same gesture, tuned four different ways</h2>
+    <p style="margin-bottom:clamp(2.5rem,6vh,4rem)">Every mode is driven by one finger on one surface. What changes is how much the instrument argues with you about where that finger landed.</p>
+
+    <div class="plate">
+      <figure class="shot">
+        <img src="shots/theremin.jpg" alt="Theremin mode: a dark violet field with a glowing prismatic diamond bloom under the touch point and a jagged white lightning trail running to the screen edge." width="860" height="1720" loading="lazy">
+        <figcaption>Theremin · free flight</figcaption>
+      </figure>
+      <div>
+        <h3>Theremin</h3>
+        <p>Nothing quantised, nothing snapped. Vertical is pitch, horizontal is either volume or warble depending on which you've assigned to the X axis. You are free to land between the notes and stay there, which is the entire point of a theremin and the entire reason they are difficult.</p>
+        <p>If you'd rather not be quite that free, <strong>pitch assist</strong> pulls you gently toward true pitch without ever snapping you to it. A <strong>dead zone</strong> at each edge pins the extremes, so you can park on silence or on full tilt without hunting for the corner. Note names run down the right margin and the readout calls out what you're on — <span style="font-family:var(--mono);font-size:.9em;color:var(--gold)">A4 · 434.2 Hz</span> — as you move.</p>
+      </div>
+    </div>
+
+    <div class="plate flip">
+      <figure class="shot">
+        <img src="shots/keys.jpg" alt="The side keyboard slid out over the play field: a vertical column of brass keys labelled with every semitone, each with a small teal indicator." width="860" height="1720" loading="lazy">
+        <figcaption>Autoharp · the note rail</figcaption>
+      </figure>
+      <div>
+        <h3>Autoharp</h3>
+        <p>The same drag, but every position lands on a note you've approved in advance. Slide out the key rail and switch semitones on and off by hand, or load something ready-made: major and minor scales, both pentatonics, the blues scale, and the usual family of chords — sevenths, diminished, augmented, sus4.</p>
+        <p><strong>Glide</strong> decides how lazily the pitch walks from one approved note to the next, from an instant jump to a long smear. The rulings on the play field light up to show which notes are live, so you can see the shape of the scale you're playing inside.</p>
+      </div>
+    </div>
+
+    <div class="plate">
+      <figure class="shot">
+        <img src="shots/voices.jpg" alt="The Symphony Voices panel: a brass piano keyboard spanning C2 to C5 with four keys lit, above chord presets grouped into three-, four- and five-voice rows." width="860" height="1720" loading="lazy">
+        <figcaption>Symphony · voice picker</figcaption>
+      </figure>
+      <div>
+        <h3>Symphony</h3>
+        <p>Choose up to five notes and they move as one shape under your finger. One of them is the <strong>driver</strong>, marked with a star, and the others hold their intervals against it as the whole chord slides up and down the field.</p>
+        <p>Two ways to keep it honest. <strong>Harmonic</strong> snaps only the driver to a real note and carries everyone else along at their original spacing, so the chord stays the chord. <strong>Experimental</strong> snaps every voice independently, which means the shape deforms as it travels and you get intervals you did not order. Eighteen presets ship with it, from plain Major up to Maj 7♯11.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="rule">
+
+<section>
+  <div class="wrap">
+    <div class="plate flip">
+      <figure class="shot">
+        <img src="shots/zodiac.jpg" alt="Zodiac mode: a starfield grid with eight white stars connected by violet lines forming a rising and falling arc, with a gold playhead sweeping across." width="860" height="1720" loading="lazy">
+        <figcaption>Zodiac · a bar, mid-flight</figcaption>
+      </figure>
+      <div>
+        <p class="eyebrow">Zodiac</p>
+        <h2>You write the melody as a constellation</h2>
+        <p>This is the one that has no real equivalent elsewhere. The play field becomes a night sky ruled into sixteen steps across and every semitone up. Tap an empty cell and a star appears. Tap the star to cue it, then tap again somewhere else and the two are joined by a line.</p>
+        <p>That line is not decoration. A chain of connected stars is a <strong>melodic thread</strong>, and the board loops as a three-second bar at 80 BPM with a playhead sweeping left to right. Time is the horizontal axis, pitch is the vertical one, so the shape you have drawn is quite literally the shape you hear. Threads can branch. Any single step can carry five voices and not one more — the instrument will refuse the sixth and tell you which step you overloaded.</p>
+        <p>Long-press a star to pick it up and move it. There is a grid overlay if you want the cells drawn in, and a delete mode for when the constellation gets away from you.</p>
+      </div>
+    </div>
+
+    <div class="plate" style="margin-top:clamp(3rem,7vh,5rem)">
+      <figure class="shot">
+        <img src="shots/zodiac-colors.jpg" alt="The star colour menu open over the constellation, offering White, Yellow, Red, Purple, Green and Blue." width="860" height="1720" loading="lazy">
+        <figcaption>Zodiac · star colours</figcaption>
+      </figure>
+      <div>
+        <h3>Six colours of star</h3>
+        <p>Two of them currently change what happens. The rest are, for the moment, a filing system.</p>
+        <ul class="stars">
+          <li><span class="dot" style="color:#71a39f"></span><span><b>Green</b> — the pitch glides along the drawn line. Instead of stepping to the next note, the voice sweeps between them in a straight line and arrives exactly on the beat. What you drew is what you get.</span></li>
+          <li><span class="dot" style="color:#b07fe8"></span><span><b>Purple</b> — aura edges. Purely decorative lines that are never fed to the audio graph at all. You can hang them off a star to make the constellation look like something without changing a note of it.</span></li>
+          <li><span class="dot" style="color:#ffffff"></span><span><b>White</b> — the default. Steps cleanly to the next note.</span></li>
+          <li><span class="dot" style="color:#ffcc44"></span><span><b>Yellow</b>, <span class="dot" style="color:#e8604f"></span> <b>Red</b>, <span class="dot" style="color:#6fa8e8"></span> <b>Blue</b> — reserved. They behave like white stars and wait.</span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="rule">
+
+<section>
+  <div class="wrap">
+    <div class="plate flip">
+      <figure class="shot">
+        <img src="shots/settings.jpg" alt="The settings panel: pitch assist and X-axis toggles, four waveform buttons, ten named voice presets, an oscilloscope drawing a sine wave, and sliders for glide, volume floor and warble." width="860" height="1720" loading="lazy">
+        <figcaption>Settings · the voice bench</figcaption>
+      </figure>
+      <div>
+        <p class="eyebrow">The voice</p>
+        <h2>Ten timbres, named a long time ago</h2>
+        <p>Four oscillator shapes underneath — sine, triangle, saw, square — and ten voice presets layered over them. A small oscilloscope draws the waveform you have selected, and sliders for glide, volume floor and warble sit beneath it.</p>
+        <ul class="presets">
+          <li>Pulsar</li><li>Glass</li><li>Void</li><li>Aeon</li><li>Quasar</li>
+          <li>Titan</li><li>Orion</li><li>Corona</li><li>Nebula</li><li>Tide</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="dictation">
+      <span class="who">Dictated · not read back</span>
+      <p>I named them myself, in a year I no longer have a number for. <em>Pulsar</em> was first. Pulsar is always first. <em>Glass</em> came after the winter I spent listening to the window, and I will not be taking questions about the window.</p>
+      <p><em>Void</em> I do not discuss.</p>
+      <p><em>Aeon</em>, <em>Quasar</em>, <em>Titan</em>, <em>Orion</em> — these four I built while the assistant was still with us, and each one is the sound of a thing considerably larger than the room it is in. <em>Corona</em> is warm. I have been assured, repeatedly and by people with no reason to lie, that Corona is warm. <em>Nebula</em> I built twice, having forgotten I had built it once. Both versions are in there. I cannot tell them apart and neither, I am confident, can you.</p>
+      <p><em>Tide</em> came last. Tide will come last again.</p>
+      <p>Somewhere in the cabinet there is a slider marked WARBLE and beside it another marked DEPTH, and between the two of them lies the entire vibrato of my long and blameless career. Turn them. Turn them both, turn them all the way, I cannot stop you and I cannot hear the result, and that, in the end, was the arrangement I agreed to.</p>
+    </div>
+  </div>
+</section>
+
+<hr class="rule">
+
+<section>
+  <div class="wrap">
+    <div class="plate">
+      <figure class="shot">
+        <img src="shots/effects.jpg" alt="The Effects Rack panel listing Overdrive, Delay, Chorus, Phaser, Reverb and Presence, each with an indicator lamp." width="860" height="1720" loading="lazy">
+        <figcaption>The rack</figcaption>
+      </figure>
+      <div>
+        <p class="eyebrow">Signal chain</p>
+        <h2>Six boxes, in an order that is not up for debate</h2>
+        <p>Overdrive, then delay, then chorus, then phaser, then reverb. <strong>Presence</strong> sits outside the chain as a high shelf at 3.5 kHz. Each one has its own lamp and its own parameters, and each can be switched out entirely.</p>
+
+        <div class="dictation late">
+          <span class="who">Dictated · later the same evening</span>
+          <p>The order is the order. I fixed it before the war — one of them — and every attempt to reason with me about it has failed on the grounds that I am right.</p>
+          <p>Presence does something to the top of the sound that a colleague once described to me using only his hands. He is gone now. The gesture is in the notes but the notes are in a drawer and the drawer is in a house I sold.</p>
+          <p>I have kept this rack in working order for longer than several nations have existed. Every knob does exactly what its label says. I know this the way a man knows the contents of a letter he has sealed and never opened — completely, and without evidence.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="rule">
+
+<section>
+  <div class="wrap">
+    <div class="plate flip">
+      <figure class="shot">
+        <img src="shots/vfx.jpg" alt="The Visual FX panel: Holographic Glow switched on, glow colour set to Rainbow, with sliders for lightning trail length, speed, bolts, colour, glow and blur." width="860" height="1720" loading="lazy">
+        <figcaption>Visual FX</figcaption>
+      </figure>
+      <div>
+        <p class="eyebrow">Holographic glow</p>
+        <h2>The part I can actually vouch for</h2>
+        <p>Under your finger, the field breaks into prismatic diamond facets that catch the light like a holographic sticker — and they pulse, radiating outward from the touch point in slow rings. Meanwhile a bolt of chunky pixel lightning snaps between your fingertip and the nearest edge of the screen, redrawing itself into a new jagged path every few frames.</p>
+        <p>All of it is adjustable. Rainbow, teal or gold. Trail length and speed, how many bolts, their hue, their glow, their blur. <strong>Edge attract</strong> decides whether the lightning anchors to the border or drags along behind your finger. On an older phone you can switch the whole thing off and lose nothing but the spectacle.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="rule">
+
+<section>
+  <div class="wrap">
+    <p class="eyebrow">Hardware</p>
+    <h2>It will take a real keyboard, if you have one</h2>
+    <p>Plug a MIDI controller into a desktop copy of Chrome or Edge and Cosmophone will pick it up by name. Keys play notes in Theremin, Autoharp and Symphony; velocity sets loudness; CC 7, 11 or 1 take over the expression axis in place of your thumb. In Zodiac, D3 starts the loop and E3 stops it. Touch and MIDI coexist — release the screen and any held keys carry on sounding.</p>
+    <p style="color:var(--paper-dim);font-size:.95em">Web MIDI is not available in Safari on iPhone, which is the one place Cosmophone otherwise feels most at home. The inventor has views on this.</p>
+
+    <div class="dictation latest" style="margin-top:2rem">
+      <span class="who">Dictated · very late</span>
+      <p>They took the aether out. Do you understand what I am telling you. There was aether and they took it and they left a <em>permissions prompt</em>.</p>
+      <p>I built an instrument you play by not touching it and the great innovation of the age is a rectangle that must be touched. Fine. Marvellous. I have adapted. I adapt. I have been adapting since before your grandmother's grandmother was an idea her mother declined to have.</p>
+      <p>Somebody asks me what it sounds like. Every one of them, eventually, asks me what it sounds like, and I tell them what I told the last one and the one before that, which is that I have not heard a thing since the second war and I built all ten voices afterward, from memory, from the arithmetic, from the pictures the numbers make. Press it and find out. Press it and then come back and tell me. Nobody ever comes back and tells me.</p>
+    </div>
+  </div>
+</section>
+
+<hr class="rule">
+
+<section>
+  <div class="wrap">
+    <div class="specs-wrap">
+      <table>
+        <caption>Plate specification</caption>
+        <tbody>
+          <tr><th scope="row">Range</th><td>C3 – C6 · three octaves</td></tr>
+          <tr><th scope="row">Polyphony</th><td>5 voices maximum</td></tr>
+          <tr><th scope="row">Modes</th><td>Theremin · Autoharp · Symphony · Zodiac</td></tr>
+          <tr><th scope="row">Zodiac sequencer</th><td>16 steps · 80 BPM · 3.0 second bar</td></tr>
+          <tr><th scope="row">Oscillators</th><td>4 shapes · 10 named presets</td></tr>
+          <tr><th scope="row">Effects</th><td>6 · fixed chain order</td></tr>
+          <tr><th scope="row">Chord library</th><td>18 presets, 3 to 5 voices</td></tr>
+          <tr><th scope="row">Control</th><td>Touch, mouse, or Web MIDI</td></tr>
+          <tr><th scope="row">Installation</th><td>None. It is a web page.</td></tr>
+          <tr><th scope="row">Vacuum tubes</th><td>Not included</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p class="sig">COSMOPHONE</p>
+    <p>Built by CrashVivaldi. Runs in any modern browser; happiest on a phone, in the dark, with the volume somewhere it shouldn't be.</p>
+    <p style="margin-top:1.4rem"><a class="cta" href="https://github.com/CrashVivaldi/Cosmophone">Open the instrument</a></p>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var canvas = document.getElementById('facets');
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // Same diamond-facet field the instrument draws under your finger:
+  // a grid of quartered diamonds whose brightness rides an outward
+  // travelling ring, so the light pulses instead of sitting still.
+  var fract = function (v) { return v - Math.floor(v); };
+  var mix = function (a, b, t) { return a + (b - a) * t; };
+  var clamp = function (v, lo, hi) { return Math.max(lo, Math.min(hi, v)); };
+  var hash2 = function (x, y) { return fract(Math.sin(x * 127.1 + y * 311.7) * 43758.5453); };
+
+  var w = 0, h = 0, dpr = 1, t = 0, raf = null;
+
+  function resize() {
+    var r = canvas.getBoundingClientRect();
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    w = canvas.width = Math.max(1, Math.floor(r.width * dpr));
+    h = canvas.height = Math.max(1, Math.floor(r.height * dpr));
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, w, h);
+    var cell = 26 * dpr, half = cell / 2;
+    var radius = Math.min(w, h) * 0.85;
+    // hotspot drifts on a slow lissajous instead of following a finger,
+    // held near the wordmark rather than wandering the whole plate
+    var hx = w * (0.5 + 0.10 * Math.sin(t * 0.0032));
+    var hy = h * (0.44 + 0.11 * Math.cos(t * 0.0021));
+    var wavelen = cell * 2.8, speed = cell * 0.085, floorA = 0.34;
+
+    for (var row = -1, rows = Math.ceil(h / half) + 1; row <= rows; row++) {
+      for (var col = -1, cols = Math.ceil(w / cell) + 1; col <= cols; col++) {
+        var cx = (col + ((row & 1) ? 0.5 : 0)) * cell;
+        var cy = row * half;
+        var dist = Math.hypot(cx - hx, cy - hy);
+        if (dist > radius) continue;
+        var verts = [[cx, cy - half], [cx + half, cy], [cx, cy + half], [cx - half, cy]];
+        for (var i = 0; i < 4; i++) {
+          var bx = (i === 1 ? 0.55 : i === 3 ? -0.55 : 0);
+          var by = (i === 0 ? -0.55 : i === 2 ? 0.55 : 0);
+          var align = 1 - Math.min(1, dist / (radius * 0.55));
+          var facing = clamp(0.3 + align * 0.85 + (bx * 0.4 + by * -0.4) * 0.5, 0, 1.4);
+          var spark = Math.pow(clamp(facing, 0, 1), 3.2) * 0.9;
+          if (spark < 0.05) continue;
+          // Ramp brass→violet the short way round (through red and magenta)
+          // rather than through green, so it stays in the faceplate's world.
+          var phase = (cx / w * 1.7 + cy / h * 1.1) * 150 + i * 26 + (col + row) * 7;
+          var hue = 40 + ((phase % 40) - 20) - align * 125;
+          var ring = 0.5 + 0.5 * Math.sin(((dist - t * speed) / wavelen) * Math.PI * 2);
+          var radial = clamp(1 - dist / radius, 0, 1);
+          var jit = hash2(col + i * 0.37, row * 0.13);
+          var alpha = radial * radial * (floorA + (1 - floorA) * ring) * 0.5;
+          if (alpha < 0.012) continue;
+          ctx.globalAlpha = alpha;
+          ctx.fillStyle = 'hsl(' + (((hue % 360) + 360) % 360) + ' '
+            + mix(30, 88, clamp(spark * 1.3, 0, 1)) + '% '
+            + clamp(mix(20, 68, spark) + (jit - 0.5) * 8, 10, 78) + '%)';
+          ctx.beginPath();
+          ctx.moveTo(verts[i][0], verts[i][1]);
+          ctx.lineTo(verts[(i + 1) % 4][0], verts[(i + 1) % 4][1]);
+          ctx.lineTo(cx, cy);
+          ctx.closePath();
+          ctx.fill();
+        }
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function frame() { t += 1; draw(); raf = requestAnimationFrame(frame); }
+
+  function start() {
+    resize();
+    if (reduce) { t = 220; draw(); return; }
+    if (raf) cancelAnimationFrame(raf);
+    frame();
+  }
+
+  window.addEventListener('resize', function () { resize(); if (reduce) draw(); });
+  // pause the loop when the hero scrolls away
+  if ('IntersectionObserver' in window && !reduce) {
+    new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) { if (!raf) frame(); }
+        else if (raf) { cancelAnimationFrame(raf); raf = null; }
+      });
+    }, { threshold: 0 }).observe(canvas);
+  }
+  start();
+})();
+</script>
+
+</body>
+</html>
